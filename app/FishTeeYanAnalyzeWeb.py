@@ -64,7 +64,8 @@ DEFAULT_SPECIAL_FISH_LIST = [
     if s.strip()
 ]
 
-DEFAULT_ASSET_MODE = os.getenv("ASSET_MODE", "value_after")  # value_after | value_before | delta_value
+# 資產顯示改為「資產變化」（累積 delta），不再使用 SessionGame(ValueBefore/After)
+DEFAULT_ASSET_MODE = os.getenv("ASSET_MODE", "delta_asset")  # delta_asset
 
 
 app = Flask(__name__)
@@ -338,112 +339,103 @@ def _parse_fish_ids_from_temptext(temp_text: Any) -> list[str]:
     return out
 
 
-def _asset_value_from_session(doc: dict[str, Any], mode: str) -> Optional[float]:
-    mode = (mode or "").strip().lower()
-    vb = _safe_float(doc.get("ValueBefore"))
-    va = _safe_float(doc.get("ValueAfter"))
-    if mode == "value_before":
-        return vb
-    if mode == "delta_value":
-        if vb is None or va is None:
-            return None
-        return va - vb
-    # default: value_after
-    return va
-
-
-def _load_session_series(
+def _load_detail_betwin_fish_raw_series(
     mdb,
     date_key: str,
     player: PlayerIdentity,
-    asset_mode: str,
-    start_ms_utc: Optional[int] = None,
-    end_ms_utc: Optional[int] = None,
+    start_us_utc: Optional[int] = None,
+    end_us_utc: Optional[int] = None,
 ) -> list[dict[str, Any]]:
-    col_name = f"SessionGame_{date_key}"
+    """
+    以 DetailBetWinFishRaw 直接建立主序列（完全不依賴 SessionGame/GameSession）：
+    - asset = 累積資產變化（sum(WinAmount - BetAmount)）
+    """
+    col_name = f"DetailBetWinFishRaw_{date_key}"
     col = mdb.get_collection(col_name)
 
-    player_filter = []
+    q: dict[str, Any] = {}
     if player.ark_id:
-        # SessionGame: ark_id / AccountID 可能都可用（樣本同值但型別不同）
-        player_filter.append({"ark_id": player.ark_id})
-        try:
-            player_filter.append({"AccountID": int(player.ark_id)})
-        except Exception:
-            pass
-    if player.user_id:
-        player_filter.append({"UID": player.user_id})
-        try:
-            player_filter.append({"UID": int(player.user_id)})
-        except Exception:
-            pass
-    if player.nickname:
-        player_filter.append({"NickName": player.nickname})
-        player_filter.append({"UserName": player.nickname})
-
-    if not player_filter:
+        q["ArkID"] = player.ark_id
+    elif player.user_id:
+        q["UserID"] = player.user_id
+    elif player.nickname:
+        # 盡量相容，但若該 collection 沒有 NickName 欄位會查不到（仍可用 ark_id/user_id）
+        q["NickName"] = player.nickname
+    else:
         return []
 
-    query: dict[str, Any] = {"$or": player_filter} if len(player_filter) > 0 else {}
-    if start_ms_utc is not None or end_ms_utc is not None:
+    if start_us_utc is not None or end_us_utc is not None:
         r: dict[str, Any] = {}
-        if start_ms_utc is not None:
-            r["$gte"] = int(start_ms_utc)
-        if end_ms_utc is not None:
-            r["$lte"] = int(end_ms_utc)
-        query["CreateTimeTS"] = r
+        if start_us_utc is not None:
+            r["$gte"] = int(start_us_utc)
+        if end_us_utc is not None:
+            r["$lte"] = int(end_us_utc)
+        q["CreateTs"] = r
 
     cursor = col.find(
-        query,
+        q,
         {
             "_id": 0,
-            "CreateTimeTS": 1,
-            "SessionID": 1,
-            "GameNO": 1,
-            "GameSerialID": 1,
-            "WagersId": 1,
+            "WagersID": 1,
+            "CreateTs": 1,
+            "Weapon": 1,
+            "BetScale": 1,
+            "OriginalBet": 1,
+            "Target": 1,
             "WinAmount": 1,
-            "EffectWin": 1,
-            "EffectBet": 1,
-            "BetCoin": 1,
-            "ValueBefore": 1,
-            "ValueAfter": 1,
-            "TempText": 1,
-            "TempInt1": 1,
-            "TempInt2": 1,
+            "WinCount": 1,
+            "BetAmount": 1,
+            "BetCount": 1,
         },
-    ).sort("CreateTimeTS", pymongo.ASCENDING)
+    ).sort("CreateTs", pymongo.ASCENDING)
 
-    rows: list[dict[str, Any]] = []
-    last_asset: Optional[float] = None
+    series: list[dict[str, Any]] = []
+    cum = 0.0
     for doc in cursor:
-        ts = doc.get("CreateTimeTS")
+        ts = doc.get("CreateTs")
         if ts is None:
             continue
-        asset = _asset_value_from_session(doc, asset_mode)
-        # 有些資料可能缺 ValueAfter/Before：為了讓主線「永遠顯示資產」，用上一筆資產補值
-        if asset is None and (asset_mode or "").lower() in ("value_after", "value_before"):
-            asset = last_asset
-        if asset is not None:
-            last_asset = asset
-        win_amount = _safe_float(doc.get("WinAmount"))
-        effect_bet = _safe_float(doc.get("EffectBet"))
-        rows.append(
+        try:
+            t = _ts_us_to_dt_utc(int(ts))
+        except Exception:
+            continue
+        wid = doc.get("WagersID")
+        try:
+            wid_i = int(wid) if wid is not None else None
+        except Exception:
+            wid_i = None
+
+        wa = _safe_float(doc.get("WinAmount")) or 0.0
+        ba = _safe_float(doc.get("BetAmount")) or 0.0
+        delta = wa - ba
+        cum += float(delta)
+
+        wc = doc.get("WinCount")
+        try:
+            wc_i = int(wc) if wc is not None else 0
+        except Exception:
+            wc_i = 0
+        ob = _safe_float(doc.get("OriginalBet"))
+        mult = None
+        if wc_i > 0 and ob is not None and ob > 0:
+            mult = (wa / wc_i) / ob
+
+        series.append(
             {
-                "t": _ts_ms_to_dt_utc(int(ts)),
-                "asset": asset,
-                "session_id": doc.get("SessionID"),
-                "wagers_id": doc.get("WagersId") or doc.get("GameNO") or doc.get("GameSerialID"),
-                "win_amount": win_amount,
-                "effect_bet": effect_bet,
-                "mult": (win_amount / effect_bet) if (win_amount is not None and effect_bet) else None,
-                "fish_ids": _parse_fish_ids_from_temptext(doc.get("TempText")),
-                # 假設 SessionGame 的 TempInt1/2 分別代表武器與押注段（可依實際欄位再調整）
-                "weapon": doc.get("TempInt1"),
-                "bet_segment": doc.get("TempInt2"),
+                "t": t,
+                "asset": cum,
+                "asset_delta": delta,
+                "wagers_id": wid_i,
+                "win_amount": wa,
+                "effect_bet": ba,
+                "mult": mult,
+                "fish_ids": [str(doc.get("Target") or "-").upper()],
+                "raw_targets": [str(doc.get("Target") or "-")],
+                "weapon": str(doc.get("Weapon") or "-"),
+                "bet_segment": ob,
             }
         )
-    return rows
+    return series
 
 
 def _load_detail_betwin_fish_raw_map(
@@ -700,6 +692,7 @@ def _load_detail_betwin_fish_raw_rows(
             "Target": 1,
             "WinAmount": 1,
             "WinCount": 1,
+            "BetAmount": 1,
             "BetCount": 1,
         },
     ).sort("CreateTs", pymongo.ASCENDING)
@@ -728,6 +721,7 @@ def _load_detail_betwin_fish_raw_rows(
                 "target": str(doc.get("Target") or "-"),
                 "win_amount": _safe_float(doc.get("WinAmount")),
                 "win_count": int(doc.get("WinCount") or 0),
+                "bet_amount": _safe_float(doc.get("BetAmount")),
                 "bet_count": int(doc.get("BetCount") or 0),
             }
         )
@@ -806,6 +800,77 @@ def _intersect_intervals(
             i += 1
         else:
             j += 1
+    return out
+
+
+def _rebase_asset_series_by_in_game(
+    series: list[dict[str, Any]],
+    in_game_intervals_utc: list[tuple[datetime, datetime]],
+) -> list[dict[str, Any]]:
+    """
+    把「資產變化」以每段 in-game 區間為基準重新歸零：
+    - 每次進入遊戲（interval start）都視為資產變化 = 0
+    - 只在 in-game 期間累積 delta（WinAmount - BetAmount）
+    - 不在 in-game 的點會把 asset 設為 None（避免把不同段落連起來）
+    """
+    if not series or not in_game_intervals_utc:
+        return series
+
+    ig = sorted(in_game_intervals_utc, key=lambda p: p[0])
+
+    def interval_for(t: datetime) -> Optional[tuple[datetime, datetime]]:
+        # ig 已 merge 且排序，可以用線性掃描（資料量通常不大）
+        for s, e in ig:
+            if s <= t <= e:
+                return (s, e)
+        return None
+
+    out: list[dict[str, Any]] = []
+    current_interval: Optional[tuple[datetime, datetime]] = None
+    cum = 0.0
+    inserted_zero_for: set[datetime] = set()
+
+    for r in series:
+        t = r.get("t")
+        if not isinstance(t, datetime):
+            continue
+
+        iv = interval_for(t)
+        if iv is None:
+            r2 = dict(r)
+            r2["asset"] = None
+            out.append(r2)
+            continue
+
+        # 進入新的 in-game interval：先插入起點 asset=0
+        if current_interval is None or iv[0] != current_interval[0]:
+            current_interval = iv
+            cum = 0.0
+            if iv[0] not in inserted_zero_for:
+                inserted_zero_for.add(iv[0])
+                out.append(
+                    {
+                        "t": iv[0],
+                        "asset": 0.0,
+                        "asset_delta": 0.0,
+                        "wagers_id": None,
+                        "win_amount": 0.0,
+                        "effect_bet": 0.0,
+                        "mult": None,
+                        "fish_ids": [],
+                        "raw_targets": [],
+                        "weapon": "-",
+                        "bet_segment": None,
+                    }
+                )
+
+        delta = _safe_float(r.get("asset_delta")) or 0.0
+        cum += float(delta)
+        r2 = dict(r)
+        r2["asset"] = cum
+        out.append(r2)
+
+    out.sort(key=lambda x: x.get("t", datetime.min.replace(tzinfo=timezone.utc)))
     return out
 
 
@@ -1613,7 +1678,7 @@ def _build_figure(
 
         # 每個圖表標題（顯示在 panel 上方左側）
         panel_titles = {
-            1: "資產",
+            1: "資產變化",
             2: "單筆押注",
             3: "武器",
             4: "打魚行為",
@@ -1835,31 +1900,19 @@ def _handle_play_fish_analyze():
 
             for pid in players:
                 resolved.append(f"ark_id={pid.ark_id} user_id={pid.user_id} nickname={pid.nickname}")
-                start_ms = int(start_dt.timestamp() * 1000)
-                end_ms = int(end_dt.timestamp() * 1000)
-                series = _load_session_series(mdb, date_key, pid, asset_mode, start_ms_utc=start_ms, end_ms_utc=end_ms)
-                if not series:
-                    continue
-
-                # 以 WagersID 對照 DetailBetWinFishRaw（同一筆 SessionGame 可能對多筆 raw）
-                wid_list: list[int] = []
-                for r in series:
-                    wid = r.get("wagers_id")
-                    try:
-                        wid_list.append(int(wid))
-                    except Exception:
-                        pass
-                wid_list = sorted(set(wid_list))
-
-                raw_map = _load_detail_betwin_fish_raw_map(
+                series = _load_detail_betwin_fish_raw_series(
                     mdb,
                     date_key,
                     pid,
-                    wid_list,
                     start_us_utc=int(start_dt.timestamp() * 1_000_000),
                     end_us_utc=int(end_dt.timestamp() * 1_000_000),
                 )
+                if not series:
+                    continue
 
+                # 這裡 raw_rows 用同一份序列來源（raw），供 OriginalBet/Weapon/Shooting 與事件顯示
+                # 取出序列中的 wagers_id 後再抓完整 raw_rows（可含 bet_count 等欄位）
+                wid_list = sorted({int(r["wagers_id"]) for r in series if r.get("wagers_id") is not None})
                 raw_rows = _load_detail_betwin_fish_raw_rows(
                     mdb,
                     date_key,
@@ -1869,60 +1922,6 @@ def _handle_play_fish_analyze():
                     end_us_utc=int(end_dt.timestamp() * 1_000_000),
                 )
 
-                tx_map = _load_transaction_fish_log_map(
-                    mdb,
-                    date_key,
-                    pid,
-                    wid_list,
-                    start_us_utc=int(start_dt.timestamp() * 1_000_000),
-                    end_us_utc=int(end_dt.timestamp() * 1_000_000),
-                )
-
-                # 回填 weapon / bet_segment / target（若 raw 有資料就覆蓋 SessionGame 的暫用欄位）
-                for r in series:
-                    try:
-                        wid = int(r.get("wagers_id"))
-                    except Exception:
-                        continue
-                    agg = raw_map.get(wid)
-                    if not agg:
-                        continue
-                    weapon_set = sorted(list(agg.get("weapon_set") or []))
-                    bet_scale_set = sorted(list(agg.get("bet_scale_set") or []))
-                    target_set = sorted(list(agg.get("target_set") or []))
-
-                    if weapon_set:
-                        # 一筆可能多種：用 join 顯示，但 weapon lane 會把整串當一種
-                        r["weapon"] = ",".join(weapon_set)
-                    # 原本 bet_segment 用 BetScale，現在圖表改用 OriginalBet（實際數值）
-                    ob_set = sorted([x for x in (agg.get("original_bet_set") or []) if isinstance(x, (int, float))])
-                    if ob_set:
-                        # 同一筆若出現多個 OriginalBet，取最大
-                        r["bet_segment"] = float(max(ob_set))
-                    if target_set:
-                        r["raw_targets"] = target_set
-
-                    # 倍數計算改用 DetailBetWinFishRaw：
-                    # mult = (WinAmount/WinCount) / OriginalBet
-                    sum_win = _safe_float(agg.get("sum_win_amount"))
-                    sum_wc = agg.get("sum_win_count")
-                    ob_val = _safe_float(r.get("bet_segment"))
-                    try:
-                        wc_i = int(sum_wc) if sum_wc is not None else 0
-                    except Exception:
-                        wc_i = 0
-                    if sum_win is not None and wc_i > 0 and ob_val and ob_val > 0:
-                        r["mult"] = (sum_win / wc_i) / ob_val
-
-                    # bet/win 一律改用 TransactionFishLog（若有資料）
-                    tx = tx_map.get(wid)
-                    if tx:
-                        r["win_amount"] = _safe_float(tx.get("win_amount"))
-                        r["effect_bet"] = _safe_float(tx.get("bet_amount"))
-                        eb = r.get("effect_bet")
-                        wa = r.get("win_amount")
-                        r["mult"] = (wa / eb) if (wa is not None and eb) else None
-
                 in_game_spans, in_game_intervals = _load_in_game_intervals(
                     mdb,
                     date_key,
@@ -1930,6 +1929,9 @@ def _handle_play_fish_analyze():
                     start_us_utc=int(start_dt.timestamp() * 1_000_000),
                     end_us_utc=int(end_dt.timestamp() * 1_000_000),
                 )
+
+                # 資產變化：每次 in-game 起點歸 0
+                series = _rebase_asset_series_by_in_game(series, in_game_intervals)
 
                 events = []
                 # 大贏/大倍/指定魚事件改用單筆 FishRaw 計算（不聚合）
@@ -1959,8 +1961,8 @@ def _handle_play_fish_analyze():
             meta = "resolved players: " + " ; ".join(resolved)
             if not charts:
                 warning = (
-                    "查不到 SessionGame 資料。"
-                    "如果你是用 NickName 查不到，請改用 ark_id(AccountID) 或 UID；或確認當天 collection 是否存在。"
+                    "查不到 DetailBetWinFishRaw 資料。"
+                    "如果你是用 NickName 查不到，請改用 ark_id(ArkID) 或 UserID；或確認當天 collection 是否存在。"
                 )
             else:
                 meta = meta + f" | charts={len(charts)} points={total_points} events={total_events}"
