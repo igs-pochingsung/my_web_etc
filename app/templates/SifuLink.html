@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>SI FU Link</title>
+    <link href="https://cdn.jsdelivr.net/npm/@sweetalert2/theme-dark@5/dark.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.js"></script>
+</head>
+<body>
+<div class="container" align="center">
+<h1>魚機私服連結轉跳</h1>
+    </br>
+    <form action="/generate_url" method="post" target="_blank" rel="noopener noreferrer">
+        <div class="input-group">
+            <label for="client_ip">Client IP:</label>
+            <select name="client_ip" id="client_ip">
+                {% for ip in client_ips %}
+                <option value="{{ ip }}" {% if ip == selected_client_ip %}selected{% endif %}>{{ ip }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="input-group">
+            <label for="client_port">Client Port:</label>
+            <input type="text" id="client_port" name="client_port" value="7456">
+        </div>
+        <div class="input-group">
+            <label for="server_ip">Server IP:</label>
+            <select name="server_ip" id="server_ip">
+                {% for ip in client_ips %}
+                <option value="{{ ip }}" {% if ip == selected_server_ip %}selected{% endif %}>{{ ip }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="input-group">
+            <label for="game">Game:</label>
+            <select name="game" id="game">
+                {% for game in games %}
+                <option value="{{ game.value }}">{{ game.display }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="input-group">
+            <label for="lang">Language:</label>
+            <select name="lang" id="lang">
+                {% for lang in langs %}
+                <option value="{{ lang }}">{{ lang }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="input-group">
+            <label for="account">Account:</label>
+            <input type="text" id="account" name="account" required>
+        </div>
+        <br>
+        <input type="submit" value="請給我網址，為了魚機用途">
+    </form>
+    
+    <!-- 參數模式管理 -->
+    <div class="pattern-manager">
+        <div class="pattern-controls">
+            <input type="text" id="patternName" placeholder="輸入模式名稱" maxlength="20">
+            <button type="button" id="savePatternBtn" class="save-btn">💾 儲存當前參數</button>
+        </div>
+        <div class="pattern-list" id="patternList">
+            <!-- 已儲存的參數模式會在這裡顯示 -->
+        </div>
+    </div>
+    
+    {% if url %}
+    <p>Generated URL: <a href="{{ url }}">{{ url }}</a></p>
+    {% endif %}
+</div>
+</body>
+</html>
+
+<script>
+  (()=> {
+      // 所有參數的記憶功能
+      const fields = {
+          'client_ip': document.getElementById('client_ip'),
+          'client_port': document.getElementById('client_port'),
+          'server_ip': document.getElementById('server_ip'),
+          'game': document.getElementById('game'),
+          'lang': document.getElementById('lang'),
+          'account': document.getElementById('account')
+      };
+      
+      // 頁面載入時，從localStorage讀取所有參數
+      window.addEventListener('DOMContentLoaded', function() {
+          Object.keys(fields).forEach(fieldName => {
+              const savedValue = localStorage.getItem(`sifuLink_${fieldName}`);
+              if (savedValue) {
+                  const field = fields[fieldName];
+                  if (field.tagName === 'SELECT') {
+                      // 對於select元素，檢查是否有匹配的選項
+                      const option = Array.from(field.options).find(opt => opt.value === savedValue);
+                      if (option) {
+                          field.value = savedValue;
+                      }
+                  } else {
+                      field.value = savedValue;
+                  }
+              }
+          });
+      });
+      
+      // 為所有輸入框和選擇框添加事件監聽器
+      Object.keys(fields).forEach(fieldName => {
+          const field = fields[fieldName];
+          
+          if (field.tagName === 'SELECT') {
+              // 對於select元素，監聽change事件
+              field.addEventListener('change', function() {
+                  localStorage.setItem(`sifuLink_${fieldName}`, this.value);
+              });
+          } else {
+              // 對於input元素，監聽blur事件
+              field.addEventListener('blur', function() {
+                  if (this.value.trim()) {
+                      localStorage.setItem(`sifuLink_${fieldName}`, this.value.trim());
+                  }
+              });
+          }
+      });
+      
+      // 當表單提交時，保存所有參數
+      document.querySelector('form').addEventListener('submit', function() {
+          Object.keys(fields).forEach(fieldName => {
+              const field = fields[fieldName];
+              const value = field.value.trim ? field.value.trim() : field.value;
+              if (value) {
+                  localStorage.setItem(`sifuLink_${fieldName}`, value);
+              }
+          });
+      });
+
+      // 參數模式管理功能
+      const patternNameInput = document.getElementById('patternName');
+      const savePatternBtn = document.getElementById('savePatternBtn');
+      const patternList = document.getElementById('patternList');
+
+      savePatternBtn.addEventListener('click', function() {
+          const patternName = patternNameInput.value.trim();
+          if (!patternName) {
+              Swal.fire({
+                  icon: 'error',
+                  title: '錯誤',
+                  text: '請輸入模式名稱！',
+                  confirmButtonColor: '#40c020a3'
+              });
+              return;
+          }
+
+          const patterns = JSON.parse(localStorage.getItem('sifuLinkPatterns') || '[]');
+          
+          // 檢查是否已達到最大數量限制
+          if (patterns.length >= 10) {
+              Swal.fire({
+                  icon: 'warning',
+                  title: '警告',
+                  text: '已達到最大儲存數量（10組），請先刪除一些舊的模式！',
+                  confirmButtonColor: '#ff4444a3'
+              });
+              return;
+          }
+
+          // 檢查模式名稱是否已存在
+          const existingPattern = patterns.find(p => p.name === patternName);
+          if (existingPattern) {
+              Swal.fire({
+                  icon: 'warning',
+                  title: '警告',
+                  text: `模式名稱 "${patternName}" 已存在，請使用不同的名稱！`,
+                  confirmButtonColor: '#ff4444a3'
+              });
+              return;
+          }
+
+          const currentParams = {};
+          Object.keys(fields).forEach(fieldName => {
+              currentParams[fieldName] = fields[fieldName].value;
+          });
+
+          patterns.push({ name: patternName, params: currentParams });
+          localStorage.setItem('sifuLinkPatterns', JSON.stringify(patterns));
+          localStorage.setItem('sifuLink_lastPattern', patternName);
+
+          Swal.fire({
+              icon: 'success',
+              title: '成功',
+              text: `模式 "${patternName}" 已儲存！`,
+              confirmButtonColor: '#40c020a3'
+          }).then(() => {
+              patternNameInput.value = ''; // 清空輸入框
+              updatePatternList();
+          });
+      });
+
+      function updatePatternList() {
+          const patterns = JSON.parse(localStorage.getItem('sifuLinkPatterns') || '[]');
+          patternList.innerHTML = '';
+          
+          if (patterns.length === 0) {
+              patternList.innerHTML = '<p style="color: #888; text-align: center; margin: 20px 0;">目前沒有儲存的參數模式。</p>';
+              return;
+          }
+          
+          patterns.forEach((pattern, index) => {
+              const div = document.createElement('div');
+              div.className = 'pattern-item';
+              div.innerHTML = `
+                  <span>${pattern.name}</span>
+                  <button type="button" class="load-btn" data-index="${index}">🔄 載入</button>
+                  <button type="button" class="delete-btn" data-index="${index}">🗑️ 刪除</button>
+              `;
+              patternList.appendChild(div);
+          });
+
+          // 為每個載入按鈕添加事件監聽器
+          document.querySelectorAll('.pattern-item .load-btn').forEach(btn => {
+              btn.addEventListener('click', function() {
+                  const index = parseInt(this.getAttribute('data-index'));
+                  loadPattern(index);
+              });
+          });
+
+          // 為每個刪除按鈕添加事件監聽器
+          document.querySelectorAll('.pattern-item .delete-btn').forEach(btn => {
+              btn.addEventListener('click', function() {
+                  const index = parseInt(this.getAttribute('data-index'));
+                  deletePattern(index);
+              });
+          });
+      }
+
+      function loadPattern(index) {
+          const patterns = JSON.parse(localStorage.getItem('sifuLinkPatterns') || '[]');
+          if (index >= 0 && index < patterns.length) {
+              const pattern = patterns[index];
+              Object.keys(fields).forEach(fieldName => {
+                  const field = fields[fieldName];
+                  if (field.tagName === 'SELECT') {
+                      const option = Array.from(field.options).find(opt => opt.value === pattern.params[fieldName]);
+                      if (option) {
+                          field.value = option.value;
+                      }
+                  } else {
+                      field.value = pattern.params[fieldName];
+                  }
+              });
+              patternNameInput.value = pattern.name;
+              localStorage.setItem('sifuLink_lastPattern', pattern.name);
+              Swal.fire({
+                  icon: 'success',
+                  title: '成功',
+                  text: `模式 "${pattern.name}" 已載入！`,
+                  confirmButtonColor: '#40c020a3'
+              });
+          } else {
+              Swal.fire({
+                  icon: 'error',
+                  title: '錯誤',
+                  text: '無效的模式索引！',
+                  confirmButtonColor: '#ff4444a3'
+              });
+          }
+      }
+
+      function deletePattern(index) {
+          const patterns = JSON.parse(localStorage.getItem('sifuLinkPatterns') || '[]');
+          if (index >= 0 && index < patterns.length) {
+              const patternName = patterns[index].name;
+              patterns.splice(index, 1);
+              localStorage.setItem('sifuLinkPatterns', JSON.stringify(patterns));
+              updatePatternList();
+              Swal.fire({
+                  icon: 'success',
+                  title: '成功',
+                  text: `模式 "${patternName}" 已刪除！`,
+                  confirmButtonColor: '#40c020a3'
+              });
+          } else {
+              Swal.fire({
+                  icon: 'error',
+                  title: '錯誤',
+                  text: '無效的模式索引！',
+                  confirmButtonColor: '#ff4444a3'
+              });
+          }
+      }
+
+      // 防禦性：若腳本載入時DOM已可用，立即嘗試更新一次列表
+      try { updatePatternList(); } catch (e) { /* ignore */ }
+
+      // 頁面載入時顯示已儲存的模式
+      window.addEventListener('DOMContentLoaded', function() {
+          // 原有的參數載入邏輯
+          Object.keys(fields).forEach(fieldName => {
+              const savedValue = localStorage.getItem(`sifuLink_${fieldName}`);
+              if (savedValue) {
+                  const field = fields[fieldName];
+                  if (field.tagName === 'SELECT') {
+                      // 對於select元素，檢查是否有匹配的選項
+                      const option = Array.from(field.options).find(opt => opt.value === savedValue);
+                      if (option) {
+                          field.value = savedValue;
+                      }
+                  } else {
+                      field.value = savedValue;
+                  }
+              }
+          });
+          
+          // 顯示已儲存的參數模式
+          updatePatternList();
+
+          // 若存在最後一次使用的模式名稱，則嘗試自動預填名稱（不自動套用），以利快速覆寫
+          const lastPatternName = localStorage.getItem('sifuLink_lastPattern');
+          if (lastPatternName) {
+              patternNameInput.value = lastPatternName;
+          }
+      });
+
+      // 額外確保：當頁面完全載入後再次嘗試更新列表
+      window.addEventListener('load', function() {
+          updatePatternList();
+      });
+
+      // Init the canvas
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.id = 'MatrixRain';
+      document.body.appendChild(canvas);
+      // Setting the width and height of the canvas
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      // Setting up the letters
+      const katakana = 'アァカサタナハマヤャラワガザダバパイィキシチニヒミリヰギジヂビピウゥクスツヌフムユュルグズブヅプエェケセテネヘメレヱゲゼデベペオォコソトノホモヨョロヲゴゾドボポヴッン';
+      const sanskrit = 'ॐअआइईउऊऋॠऌॡऎएऐऒओऔअंअःकखगघङचछजझञटठडढणतथदधनपफबभमयरलळवशषसह';
+      const latin = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      const nums = '0123456789';
+      const letters = (Math.random() > 0.5 ? katakana : sanskrit) + latin + nums;
+      // Setting up the columns
+      const fontSize = 13;
+      let columns = canvas.width / fontSize;
+      // Setting up the drops
+      let drops = [];
+      let lastDropsTxt = [];
+      for (let i = 0; i < columns; i++) {
+          drops[i] = dropInitIndex();
+          lastDropsTxt[i] = "";
+      }
+      // Loop the animation
+      setInterval(draw, 30);
+      // Resize matrix raindrops
+      window.addEventListener('resize', () => {
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+          columns = canvas.width / fontSize;
+          if (columns > drops.length) {
+              for (let i = drops.length; i < columns; i++) {
+                  drops.push(dropInitIndex());
+              }
+          }
+          else {
+              drops.length = Math.floor(columns);
+          }
+      });
+      // Matrix raindrops init index
+      function dropInitIndex() {
+          return Math.floor(Math.random() * (canvas.height / fontSize));
+      }
+      // Setting up the draw function
+      function draw() {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.font = fontSize + 'px monospace';
+          let text = '';
+          let drop = null;
+          for (let i = 0; i < drops.length; i++) {
+              drop = drops[i];
+              if (lastDropsTxt[i]) {
+                  ctx.fillStyle = '#080';
+                  ctx.fillText(lastDropsTxt[i], i * fontSize, (drop - 1) * fontSize);
+              }
+              lastDropsTxt[i] = text = letters[Math.floor(Math.random() * letters.length)];
+              ctx.fillStyle = '#666';
+              ctx.fillText(text, i * fontSize, drop * fontSize);
+              if (drop * fontSize > canvas.height && Math.random() > 0.975) {
+                  drops[i] = 0;
+                  lastDropsTxt[i] = "";
+              }
+              drops[i]++;
+          }
+      }
+  })()
+</script>
+
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+    }
+
+    .container {
+        display: flex;
+        flex-direction: column;
+        justify-content: center; /* Center horizontally */
+        align-items: center; /* Center vertically */
+        height: 75vh; /* Take up the full viewport height */
+    }
+
+    .input-group {
+        display: flex;
+        align-items: baseline; /* Align items along their baseline */
+        margin-bottom: 5px; /* Add space between groups */
+        width: 100%; /* Make input-group fill the form */
+    }
+
+    .input-group label {
+        margin-right: 20px; /* Space between label and input/select */
+        white-space: nowrap; /* Prevent label from wrapping */
+    }
+
+    .input-group input[type="text"],
+    .input-group select {
+        flex-grow: 1; /* Allow input and select elements to fill available space */
+        padding: 0 5px; /* Padding inside input/select */
+        /* Adjust height, border-radius, and other styling as needed */
+    }
+
+    h1 {
+        font-size: 48px; /* Increase font size */
+    }
+
+    body {
+        background-color: #000;
+        color: #fff;
+        font-family: monospace;
+        font-size: 15px;
+    }
+
+    canvas {
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        display: block;
+        position: fixed;
+        z-Index: -999;
+        background: #000;
+    }
+
+    input[type="checkbox"] {
+        -webkit-appearance: none;
+        background-color: #353539;
+        border: 1px solid #808080;
+        padding: 10px;
+        margin-left: -5px;
+        margin-bottom: -3px;
+        border-radius: 3px;
+        position: relative;
+    }
+
+        input[type="checkbox"]:checked {
+            background-color: #353539;
+            border: 1px solid #808080;
+        }
+
+            input[type="checkbox"]:checked:after {
+                content: "✔";
+                font-size: 15px;
+                position: absolute;
+                top: 0px;
+                left: 3.5px;
+                color: #0f0;
+            }
+
+    input[type="text"],
+    select {
+        background-color: #353539;
+        border-radius: 5px;
+        color: #0f0;
+        font-size: 15px;
+        padding-top: 3px;
+        padding-bottom: 3px;
+        margin-top: 5px;
+        margin-bottom: 5px;
+        height: 30px; /* Uniform height */
+        width: 200px; /* Uniform width */
+        padding: 0 5px; /* Padding inside input/select */
+    }
+
+    input[type="button"] {
+        background-color: #40c020a3;
+        border: none;
+        border-radius: 5px;
+        color: #000;
+        font-weight: bold;
+        padding: 5px;
+        margin: 5px;
+    }
+
+    input[type="submit"] {
+        background-color: #40c020a3;
+        border: none;
+        border-radius: 5px;
+        color: #000;
+        font-weight: bold;
+        padding: 5px;
+        margin: 5px;
+        font-size: 20px; /* Increase font size */
+        padding: 10px 20px; /* Increase padding to make the button larger */
+        width: auto; /* Auto width for submit button */
+        padding: 10px 20px; /* Larger padding for better click area */
+    }
+
+    .clear-btn {
+        background-color: #ff4444a3;
+        border: none;
+        border-radius: 3px;
+        color: #fff;
+        font-size: 12px;
+        padding: 5px 8px;
+        margin-left: 5px;
+        cursor: pointer;
+        transition: opacity 0.2s ease;
+    }
+
+    .clear-btn:hover {
+        background-color: #ff6666a3;
+    }
+
+    .clear-btn:active {
+        transform: scale(0.95);
+    }
+
+    .clear-all-btn {
+        background-color: #ff0000a3; /* Redder color for clear all */
+        border: none;
+        border-radius: 5px;
+        color: #fff;
+        font-weight: bold;
+        padding: 10px 20px; /* Larger padding */
+        margin-top: 10px; /* Add some space above */
+        font-size: 18px; /* Slightly larger font */
+    }
+
+    .clear-all-btn:hover {
+        background-color: #ff3333a3;
+    }
+
+    .clear-all-btn:active {
+        transform: scale(0.98);
+    }
+
+    /* 新增的參數模式管理樣式 */
+    .pattern-manager {
+        margin-top: 20px;
+        padding: 15px;
+        background-color: #222;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    }
+
+    .pattern-controls {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    .pattern-controls input {
+        flex-grow: 1;
+        padding: 8px 10px;
+        border: 1px solid #444;
+        border-radius: 5px;
+        background-color: #333;
+        color: #fff;
+        font-size: 14px;
+    }
+
+    .pattern-controls button {
+        padding: 8px 15px;
+        border: none;
+        border-radius: 5px;
+        background-color: #40c020a3;
+        color: #fff;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+    }
+
+    .pattern-controls button:hover {
+        background-color: #40c020a3;
+    }
+
+    .pattern-controls button:active {
+        transform: scale(0.98);
+    }
+
+    .pattern-list {
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #444;
+        border-radius: 5px;
+        padding: 10px;
+        background-color: #1a1a1a;
+    }
+
+    .pattern-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px dashed #555;
+    }
+
+    .pattern-item:last-child {
+        border-bottom: none;
+    }
+
+    .pattern-item span {
+        flex-grow: 1;
+        margin-right: 10px;
+        color: #0f0;
+        font-size: 14px;
+    }
+
+    .pattern-item .load-btn,
+    .pattern-item .delete-btn {
+        padding: 5px 10px;
+        border: none;
+        border-radius: 3px;
+        background-color: #666;
+        color: #fff;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+    }
+
+    .pattern-item .load-btn:hover {
+        background-color: #40c020a3;
+    }
+
+    .pattern-item .delete-btn:hover {
+        background-color: #ff4444a3;
+    }
+
+    .pattern-item .load-btn:active,
+    .pattern-item .delete-btn:active {
+        transform: scale(0.95);
+    }
+</style>

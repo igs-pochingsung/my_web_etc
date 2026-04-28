@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FishTeeYan Analyze</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Arial, "Microsoft JhengHei", sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .plotly-graph-div { width: 100% !important; }
+    #loadingOverlay { z-index: 2000; }
+  </style>
+</head>
+<body class="bg-body-tertiary">
+  <nav class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+    <div class="container">
+      <a class="navbar-brand fw-semibold" href="{{ url_for('play_fish_analyze') }}">Fish 玩家遊玩狀況分析</a>
+      <div class="ms-auto small text-secondary">
+        <span class="badge text-bg-light border">Plotly</span>
+        <span class="badge text-bg-light border">Mongo</span>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container my-4">
+    <!-- Loading overlay (shown on submit) -->
+    <div id="loadingOverlay" class="position-fixed top-0 start-0 w-100 h-100 d-none">
+      <div class="position-absolute top-0 start-0 w-100 h-100 bg-dark opacity-50"></div>
+      <div class="position-absolute top-50 start-50 translate-middle">
+        <div class="card shadow-lg">
+          <div class="card-body d-flex align-items-center gap-3">
+            <div class="spinner-border text-primary" role="status" aria-label="loading"></div>
+            <div>
+              <div class="fw-semibold">資料載入中…</div>
+              <div id="loadingHint" class="small text-secondary d-none">資料量較大，可能需要較久時間，請稍候。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <ul class="nav nav-tabs mb-3">
+              <li class="nav-item">
+                <a class="nav-link {% if active_tab == 'playtime' %}active{% endif %}"
+                   href="{{ url_for('play_fish_analyze') }}?tab=playtime{% if qs %}&{{ qs }}{% endif %}">遊玩時間查詢</a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link {% if active_tab != 'playtime' %}active{% endif %}"
+                   href="{{ url_for('play_fish_analyze') }}?tab=detail{% if qs %}&{{ qs }}{% endif %}">詳細分析</a>
+              </li>
+            </ul>
+
+            {% if active_tab == 'playtime' %}
+              <form id="inoutForm" method="get" action="{{ url_for('play_fish_analyze') }}" class="row g-3 align-items-end">
+                <input type="hidden" name="tab" value="playtime" />
+                <div class="col-12 col-md-6">
+                  <label class="form-label">玩家</label>
+                  <input name="player" class="form-control" value="{{ player }}" placeholder="ArkID / UID / NickName / MerchantUserAccount" />
+                </div>
+                <div class="col-12 col-md-3">
+                  <div class="small text-secondary">
+                    會搜尋近 {{ playtime_days }} 天的 InOut 紀錄
+                  </div>
+                </div>
+                <div class="col-12 col-md-3 d-grid">
+                  <button type="submit" class="btn btn-primary">查詢</button>
+                </div>
+              </form>
+
+              {% if inout_rows %}
+                <div class="table-responsive mt-3">
+                  <table class="table table-sm align-middle">
+                    <thead>
+                      <tr>
+                        <th>日期</th>
+                        <th>ArkID</th>
+                        <th>遊戲</th>
+                        <th>開始（本地）</th>
+                        <th>結束（本地）</th>
+                        <th>套用到詳細分析</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for r in inout_rows %}
+                        <tr>
+                          <td class="mono">{{ r.date }}</td>
+                          <td class="mono">{{ r.ark_id }}</td>
+                          <td>{{ r.label }}</td>
+                          <td class="mono">{{ r.start_local }}</td>
+                          <td class="mono">{{ r.end_local }}</td>
+                          <td>
+                            <a class="btn btn-sm btn-outline-secondary"
+                               href="{{ url_for('play_fish_analyze') }}?tab=detail&defer=1&auto=1&date={{ r.date }}&player={{ r.player_for_analysis }}&start_time={{ r.start_rounded }}&end_time={{ r.end_rounded }}&big_win={{ big_win }}&big_mult={{ big_mult }}&special_fish={{ special_fish }}">
+                              套用
+                            </a>
+                          </td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+                <div class="small text-secondary">
+                  「套用」會把開始時間向下取整到 10 分鐘、結束時間向上取整到 10 分鐘（本地時間）。
+                </div>
+              {% else %}
+                <div class="small text-secondary mt-3">請輸入玩家後查詢。</div>
+              {% endif %}
+            {% else %}
+            <form id="queryForm" method="get" action="{{ url_for('play_fish_analyze') }}" class="row g-3 align-items-end">
+              <input type="hidden" name="tab" value="detail" />
+              <!-- 第 1 行：日期 / 開始時間 / 結束時間 -->
+              <div class="col-12">
+                <div class="row g-3 align-items-end">
+                  <div class="col-12 col-md-4">
+                    <label class="form-label">日期（一天）</label>
+                    <input name="date" type="date" class="form-control" value="{{ date }}" />
+                  </div>
+                  <div class="col-6 col-md-4">
+                    <label class="form-label">開始時間（本地）</label>
+                    <input name="start_time" type="time" class="form-control" value="{{ start_time }}" step="60" />
+                  </div>
+                  <div class="col-6 col-md-4">
+                    <label class="form-label">結束時間（本地）</label>
+                    <input name="end_time" type="time" class="form-control" value="{{ end_time }}" step="60" />
+                  </div>
+                </div>
+              </div>
+
+              <!-- 第 2 行：贏分 / 倍數 / 魚清單 -->
+              <div class="col-12">
+                <div class="row g-3 align-items-end">
+                  <div class="col-6 col-md-2">
+                    <label class="form-label">大贏分事件閥值</label>
+                    <input name="big_win" class="form-control" value="{{ big_win }}" />
+                  </div>
+                  <div class="col-6 col-md-2">
+                    <label class="form-label">大倍數事件閥值</label>
+                    <input name="big_mult" class="form-control" value="{{ big_mult }}" />
+                  </div>
+                  <div class="col-12 col-md-8">
+                    <label class="form-label">指定魚清單（逗號分隔）</label>
+                    <input name="special_fish" class="form-control" value="{{ special_fish }}" placeholder="LUCKY_BUDDHA_EX,DRACULA_II,..." />
+                  </div>
+                </div>
+              </div>
+
+              <!-- 第 3 行：玩家 / 分析 / 強制刷新 -->
+              <div class="col-12">
+                <div class="row g-3 align-items-center">
+                  <div class="col-12 col-md-8">
+                    <label class="form-label">玩家</label>
+                    <input name="player" class="form-control" value="{{ player }}" placeholder="ArkID / UID / NickName / MerchantUserAccount" />
+                    <div class="form-text">NickName 查到多個 ArkID 時會分成多張圖。</div>
+                  </div>
+                  <div class="col-6 col-md-2 d-grid align-self-center">
+                    <button type="submit" class="btn btn-primary">分析</button>
+                  </div>
+                  <div class="col-6 col-md-2 d-grid align-self-center">
+                    <button type="submit" name="refresh" value="1" class="btn btn-outline-secondary">強制刷新</button>
+                  </div>
+                </div>
+              </div>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        {% if warning %}
+          <div class="alert alert-warning shadow-sm" role="alert">{{ warning }}</div>
+        {% endif %}
+
+        {% if meta %}
+          <div class="card shadow-sm">
+            <div class="card-body">
+              <div class="text-secondary small">查詢資訊</div>
+              <div class="mono small">{{ meta }}</div>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="col-12">
+        {% if charts %}
+          <div class="accordion shadow-sm" id="chartsAccordion">
+            {% for c in charts %}
+              <div class="accordion-item">
+                <h2 class="accordion-header" id="heading{{ loop.index }}">
+                  <button class="accordion-button {% if loop.index != 1 %}collapsed{% endif %}" type="button"
+                          data-bs-toggle="collapse" data-bs-target="#collapse{{ loop.index }}"
+                          aria-expanded="{% if loop.index == 1 %}true{% else %}false{% endif %}"
+                          aria-controls="collapse{{ loop.index }}">
+                    <span class="mono small">{{ c.title }}</span>
+                  </button>
+                </h2>
+                <div id="collapse{{ loop.index }}" class="accordion-collapse collapse {% if loop.index == 1 %}show{% endif %}"
+                     aria-labelledby="heading{{ loop.index }}" data-bs-parent="#chartsAccordion">
+                  <div class="accordion-body bg-white">
+                    {% if c.summary %}
+                      <div class="mb-2">{{ c.summary|safe }}</div>
+                    {% endif %}
+                    {{ c.div|safe }}
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="card shadow-sm">
+            <div class="card-body text-secondary">請輸入日期與玩家後按「分析」。</div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+          crossorigin="anonymous"></script>
+  <script>
+    (function () {
+      function showLoading() {
+        var overlay = document.getElementById('loadingOverlay');
+        var hint = document.getElementById('loadingHint');
+        if (!overlay) return;
+        overlay.classList.remove('d-none');
+        if (hint) hint.classList.add('d-none');
+        window.__loadingHintTimer = window.setTimeout(function () {
+          if (hint) hint.classList.remove('d-none');
+        }, 8000);
+      }
+      function hideLoading() {
+        var overlay = document.getElementById('loadingOverlay');
+        var hint = document.getElementById('loadingHint');
+        if (overlay) overlay.classList.add('d-none');
+        if (hint) hint.classList.add('d-none');
+        if (window.__loadingHintTimer) window.clearTimeout(window.__loadingHintTimer);
+      }
+      document.addEventListener('DOMContentLoaded', function () {
+        hideLoading();
+        var form = document.getElementById('queryForm');
+        if (form) {
+          form.addEventListener('submit', function () {
+            showLoading();
+          });
+        }
+        var inoutForm = document.getElementById('inoutForm');
+        if (inoutForm) {
+          inoutForm.addEventListener('submit', function () {
+            showLoading();
+          });
+        }
+
+        // 點擊「套用」後：先到詳細分析頁（defer=1），載入後自動送出表單
+        try {
+          var url = new URL(window.location.href);
+          if (url.searchParams.get('auto') === '1' && url.searchParams.get('tab') === 'detail') {
+            var qf = document.getElementById('queryForm');
+            if (qf) {
+              window.setTimeout(function () {
+                showLoading();
+                qf.requestSubmit ? qf.requestSubmit() : qf.submit();
+              }, 50);
+            }
+          }
+        } catch (e) {}
+      });
+      window.addEventListener('pageshow', hideLoading);
+    })();
+  </script>
+</body>
+</html>
+

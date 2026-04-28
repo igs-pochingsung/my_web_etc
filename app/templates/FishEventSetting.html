@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>魚機活動設定工具</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Roboto', 'San Francisco', 'Proxima Nova', sans-serif;
+        }
+        .form-container {
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            background-color: #f9f9f9;
+        }
+        .title {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="title">
+            <h1>魚機活動設定工具</h1>
+        </div>
+        <div class="form-container">
+            <!-- 錯誤訊息顯示區域 -->
+            <div id="errorAlert" class="alert alert-danger" style="display: none;">
+                <strong>錯誤：</strong>
+                <span id="errorMessage"></span>
+            </div>
+            <!-- 成功訊息顯示區域 -->
+            <div id="successAlert" class="alert alert-success" style="display: none;">
+                <strong>成功：</strong>
+                <span id="successMessage"></span>
+            </div>
+            <form id="dataForm">
+                <div class="form-group">
+                    <label for="logo">市場:</label>
+                    <select class="form-control" id="logo" name="logo" required>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="game">遊戲:</label>
+                    <select class="form-control" id="game" name="game" required>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="event">活動類型:</label>
+                    <select class="form-control" id="event" name="event" required>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="startTime">開始時間(市場當地時間):</label>
+                    <input type="datetime-local" class="form-control" id="startTime" name="startTime" required>
+                </div>
+                <div class="form-group">
+                    <label for="endTime">結束時間(市場當地時間):</label>
+                    <input type="datetime-local" class="form-control" id="endTime" name="endTime" required>
+                </div>
+                <div class="form-group">
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input" id="noEnd" name="noEnd">
+                        <label class="form-check-label" for="noEnd">常駐</label>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-primary" id="generateBtn" onclick="generateScript()">
+                    <span id="btnText">產出設定語法</span>
+                    <span id="btnSpinner" class="spinner-border spinner-border-sm" style="display: none;" aria-hidden="true"></span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // 錯誤處理和用戶反饋函數
+        function showError(message) {
+            const errorAlert = document.getElementById('errorAlert');
+            const errorMessage = document.getElementById('errorMessage');
+            const successAlert = document.getElementById('successAlert');
+            
+            successAlert.style.display = 'none';
+            errorMessage.textContent = message;
+            errorAlert.style.display = 'block';
+            
+            // 3秒後自動隱藏
+            setTimeout(() => {
+                errorAlert.style.display = 'none';
+            }, 5000);
+        }
+
+        function showSuccess(message) {
+            const successAlert = document.getElementById('successAlert');
+            const successMessage = document.getElementById('successMessage');
+            const errorAlert = document.getElementById('errorAlert');
+            
+            errorAlert.style.display = 'none';
+            successMessage.textContent = message;
+            successAlert.style.display = 'block';
+            
+            // 3秒後自動隱藏
+            setTimeout(() => {
+                successAlert.style.display = 'none';
+            }, 3000);
+        }
+
+        function hideAllAlerts() {
+            document.getElementById('errorAlert').style.display = 'none';
+            document.getElementById('successAlert').style.display = 'none';
+        }
+
+        function setLoading(isLoading) {
+            const btn = document.getElementById('generateBtn');
+            const btnText = document.getElementById('btnText');
+            const btnSpinner = document.getElementById('btnSpinner');
+            
+            if (isLoading) {
+                btn.disabled = true;
+                btnText.style.display = 'none';
+                btnSpinner.style.display = 'inline-block';
+            } else {
+                btn.disabled = false;
+                btnText.style.display = 'inline';
+                btnSpinner.style.display = 'none';
+            }
+        }
+
+        const logoOptions = ['MY', 'TH', 'MM', 'VN', 'AW', 'Macross'];
+        const gameOptions = {
+            'default': ['OceanKing4', 'ZombieAwaken', 'MrFortune', 'MoneyTree', 'LuckyBuddha', 'Circus', 'AladdinAdventure', 'SuperStar', 'IceFire', 'CatFish', 'JackpotFrenzy', 'RagingDragonDeluxe'],
+            'AW_Macross': ['ZombieAwaken', 'MrFortune', 'MoneyTree', 'LuckyBuddha', 'Circus', 'AladdinAdventure', 'SuperStar', 'IceFire', 'CatFish', 'JackpotFrenzy', 'RagingDragonDeluxe']
+        };
+        const eventOptions = {
+            'OceanKing4': ['Egg', 'Xmas', 'Gow', 'TukTuk', 'DragonBoat', 'MustJP'],
+            'default': ['MoonRabbit', 'DragonBoat', 'SpookyGhost', 'LionDance', 'CritRunningGingerbread']
+        };
+
+        const logoSelect = document.getElementById('logo');
+        const gameSelect = document.getElementById('game');
+        const eventSelect = document.getElementById('event');
+
+        logoOptions.forEach(option => {
+            const opt = document.createElement('option');
+            opt.value = option;
+            opt.textContent = option;
+            logoSelect.appendChild(opt);
+        });
+
+        logoSelect.addEventListener('change', function() {
+            gameSelect.innerHTML = '';
+            const selectedLogo = logoSelect.value;
+            const games = ['AW', 'Macross'].includes(selectedLogo) ? gameOptions['AW_Macross'] : gameOptions['default'];
+            games.forEach(option => {
+                const opt = document.createElement('option');
+                opt.value = option;
+                opt.textContent = option;
+                gameSelect.appendChild(opt);
+            });
+            gameSelect.dispatchEvent(new Event('change'));
+        });
+
+        gameSelect.addEventListener('change', function() {
+            eventSelect.innerHTML = '';
+            const selectedGame = gameSelect.value;
+            const events = selectedGame === 'OceanKing4' ? eventOptions['OceanKing4'] : eventOptions['default'];
+            events.forEach(option => {
+                const opt = document.createElement('option');
+                opt.value = option;
+                opt.textContent = option;
+                eventSelect.appendChild(opt);
+            });
+        });
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const startTimeInput = document.getElementById('startTime');
+            const startTimeDate = new Date();
+            startTimeDate.setDate(startTimeDate.getDate() + 7);
+            const formattedStartTimeDate = startTimeDate.toISOString().slice(0, 16);
+            startTimeInput.value = formattedStartTimeDate;
+            startTimeInput.defaultValue = formattedStartTimeDate;
+
+            const endTimeInput = document.getElementById('endTime');
+            const endTimeDate = new Date();
+            endTimeDate.setDate(endTimeDate.getDate() + 14);
+            const formattedEndTimeDate = endTimeDate.toISOString().slice(0, 16);
+            endTimeInput.value = formattedEndTimeDate;
+            endTimeInput.defaultValue = formattedEndTimeDate;
+
+            // Set initial values for game and event based on the initial value of logo
+            const selectedLogo = logoSelect.value;
+            if (selectedLogo) {
+                const games = ['AW', 'Macross'].includes(selectedLogo) ? gameOptions['AW_Macross'] : gameOptions['default'];
+                gameSelect.innerHTML = '';
+                games.forEach(option => {
+                    const opt = document.createElement('option');
+                    opt.value = option;
+                    opt.textContent = option;
+                    gameSelect.appendChild(opt);
+                });
+                gameSelect.dispatchEvent(new Event('change'));
+            }
+            
+            // 執行初始表單驗證
+            validateForm();
+        });
+
+        document.getElementById('game').addEventListener('change', function() {
+            const noEndCheckbox = document.getElementById('noEnd').parentElement;
+            if (this.value === 'OceanKing4') {
+                noEndCheckbox.style.display = 'none';
+            } else {
+                noEndCheckbox.style.display = 'block';
+            }
+        });
+
+        // 即時表單驗證
+        function validateForm() {
+            const market = document.getElementById('logo').value;
+            const game = document.getElementById('game').value;
+            const event = document.getElementById('event').value;
+            const startTime = document.getElementById('startTime').value;
+            const endTime = document.getElementById('endTime').value;
+            const noEnd = document.getElementById('noEnd').checked;
+            const generateBtn = document.getElementById('generateBtn');
+
+            const isValid = market && game && event && startTime && (endTime || noEnd);
+            generateBtn.disabled = !isValid;
+
+            if (!isValid) {
+                generateBtn.classList.add('btn-secondary');
+                generateBtn.classList.remove('btn-primary');
+            } else {
+                generateBtn.classList.add('btn-primary');
+                generateBtn.classList.remove('btn-secondary');
+            }
+        }
+
+        // 為所有表單元素添加即時驗證
+        document.getElementById('logo').addEventListener('change', validateForm);
+        document.getElementById('game').addEventListener('change', validateForm);
+        document.getElementById('event').addEventListener('change', validateForm);
+        document.getElementById('startTime').addEventListener('input', validateForm);
+        document.getElementById('endTime').addEventListener('input', validateForm);
+        document.getElementById('noEnd').addEventListener('change', validateForm);
+
+        document.getElementById('startTime').addEventListener('change', function() {
+            const startTimeInput = document.getElementById('startTime');
+            const endTimeInput = document.getElementById('endTime');
+            const startTime = new Date(document.getElementById('startTime').value);
+            const endTime = new Date(endTimeInput.value);
+
+            if (startTime && endTime && endTime <= startTime) {
+                showError('結束時間必須晚於開始時間');
+                startTimeInput.value = startTimeInput.defaultValue;
+            } else {
+                startTimeInput.defaultValue = startTimeInput.value;
+            }
+        });
+
+        document.getElementById('endTime').addEventListener('change', function() {
+            const startTime = new Date(document.getElementById('startTime').value);
+            const endTimeInput = document.getElementById('endTime');
+            const endTime = new Date(endTimeInput.value);
+
+            if (startTime && endTime && endTime <= startTime) {
+                showError('結束時間必須晚於開始時間');
+                endTimeInput.value = endTimeInput.defaultValue;
+            } else {
+                endTimeInput.defaultValue = endTimeInput.value;
+            }
+        });
+
+        document.getElementById('noEnd').addEventListener('change', function() {
+            const endTimeInput = document.getElementById('endTime');
+            if (this.checked) {
+                endTimeInput.disabled = true;
+            } else {
+                endTimeInput.disabled = false;
+            }
+        });
+
+        function generateScript() {
+            // 隱藏之前的訊息並開始載入
+            hideAllAlerts();
+            setLoading(true);
+
+            try {
+                // 表單驗證
+                const market = document.getElementById('logo').value;
+                const game = document.getElementById('game').value;
+                const event = document.getElementById('event').value;
+                const startTime = document.getElementById('startTime').value;
+                const endTime = document.getElementById('endTime').value;
+                const noEnd = document.getElementById('noEnd').checked;
+
+                if (!market || !game || !event || !startTime || (!endTime && !noEnd)) {
+                    throw new Error('請填寫所有必填欄位');
+                }
+
+                const startTimeDate = new Date(startTime);
+                const endTimeDate = new Date(endTime);
+
+                if (!noEnd && endTimeDate <= startTimeDate) {
+                    throw new Error('結束時間必須晚於開始時間');
+                }
+
+                if (startTimeDate < new Date()) {
+                    throw new Error('開始時間不能早於現在時間');
+                }
+
+            const timeShift = {
+                "MY": {"Hour": 0, "Min": 0, "MachineTimeIsTW": true},
+                "TH": {"Hour": 1, "Min": 0, "MachineTimeIsTW": false},
+                "MM": {"Hour": 1, "Min": 30, "MachineTimeIsTW": true},
+                "VN": {"Hour": 1, "Min": 0, "MachineTimeIsTW": false},
+                "AW": {"Hour": 0, "Min": 0, "MachineTimeIsTW": true},
+                "Macross": {"Hour": 0, "Min": 0, "MachineTimeIsTW": true}
+            };
+
+            const delta = timeShift[market];
+            const localStartTime = startTimeDate;
+            const TWStartTime = new Date(localStartTime.getTime() + delta.Hour * 3600000 + delta.Min * 60000);
+            const MachineStartTime = delta.MachineTimeIsTW ? TWStartTime : localStartTime;
+
+            const localEndTime = endTimeDate;
+            const TWEndTime = new Date(localEndTime.getTime() + delta.Hour * 3600000 + delta.Min * 60000);
+            const MachineEndTime = delta.MachineTimeIsTW ? TWEndTime : localEndTime;
+
+            function toISOLocal(d) {
+                var z  = n =>  ('0' + n).slice(-2);
+                var zz = n => ('00' + n).slice(-3);
+
+                return d.getFullYear() + '-'
+                     + z(d.getMonth()+1) + '-' +
+                     z(d.getDate()) + 'T' +
+                     z(d.getHours()) + ':'  +
+                     z(d.getMinutes()) + ':' +
+                     z(d.getSeconds()) + '.' +
+                     zz(d.getMilliseconds()) +
+                     'Z'
+            }
+
+            let script = '';
+            let fileName = '';
+
+            if (game !== 'OceanKing4') {
+                const EventScript = {
+                    "DragonBoat": {"FileName": `FishScriptSchedule_DRAGON_BOAT_${market}_${MachineStartTime.toISOString().split('T')[0]}.py`, "Script": "ACTIVITY_CRIT_DRAGON_BOAT_190S", "ScheduleName": "CRIT_DRAGON_BOAT"},
+                    "MoonRabbit": {"FileName": `FishScriptSchedule_MOON_RABBIT_${market}_${MachineStartTime.toISOString().split('T')[0]}.py`, "Script": "ACTIVITY_MOON_RABBIT_190S", "ScheduleName": "MOON_RABBIT"},
+                    "SpookyGhost": {"FileName": `FishScriptSchedule_SPOOKY_GHOST_${market}_${MachineStartTime.toISOString().split('T')[0]}.py`, "Script": "ACTIVITY_CRIT_SPOOKY_GHOST_190S", "ScheduleName": "CRIT_SPOOKY_GHOST"},
+                    "LionDance": {"FileName": `FishScriptSchedule_LION_DANCE_${market}_${MachineStartTime.toISOString().split('T')[0]}.py`, "Script": "ACTIVITY_CRIT_LION_DANCE_190S", "ScheduleName": "LION_DANCE"},
+					"CritRunningGingerbread": {"FileName": `FishScriptSchedule_CRIT_RUNNING_GINGERBREAD_${market}_${MachineStartTime.toISOString().split('T')[0]}.py`, "Script": "ACTIVITY_CRIT_RUNNING_GINGERBREAD_190S", "ScheduleName": "CRIT_RUNNING_GINGERBREAD"}
+                };
+
+                const StageMap = {
+                    "ZombieAwaken": ["Happy", "Regal"],
+                    "MrFortune": ["Happy", "Regal"],
+                    "MoneyTree": ["Happy", "Regal"],
+                    "LuckyBuddha": ["Happy", "Regal"],
+                    "Circus": ["Happy", "Regal"],
+                    "AladdinAdventure": ["Happy", "Regal"],
+                    "SuperStar": ["Happy", "Regal"],
+                    "IceFire": ["Happy", "Regal"],
+                    "CatFish": ["Happy", "Regal"],
+                    "JackpotFrenzy": ["Happy", "Regal"],
+                    "RagingDragonDeluxe": ["Happy", "Regal"]
+                };
+
+                const LogoMap = {
+                    "MY": ["ClubSunCity", "GW99", "Kenzo", "Play8oy"],
+                    "TH": ["StarVegas", "Avenger", "StarVegasDeluxe"],
+                    "MM": ["iDragon"],
+                    "VN": ["3King", "vnsuncity"],
+                    "AW": ["Q", "USD", "MYR", "THB", "KVND", "KIDR"],
+                    "Macross": [""]
+                };
+
+                const InGameType = [];
+                for (const logo of LogoMap[market]) {
+                    if (StageMap[game]) {
+                        for (const stage of StageMap[game]) {
+                            InGameType.push(game + logo + stage);
+                        }
+                    }
+                }
+
+                const eventScript = EventScript[event];
+                const scheduleName = `${game.toUpperCase()}_${eventScript.ScheduleName}`;
+                fileName = `FishScriptSchedule-${scheduleName}-${market}-${MachineStartTime.toISOString().split('T')[0]}.py`;
+                let endTimeInScript = `-1`
+                if (!document.getElementById('noEnd').checked) {
+                    endTimeInScript = `datetime.datetime(${MachineEndTime.getFullYear()}, ${MachineEndTime.getMonth() + 1}, ${MachineEndTime.getDate()}, ${MachineEndTime.getHours()}, ${MachineEndTime.getMinutes()}, ${MachineEndTime.getSeconds()})`;
+                }
+                script = `
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+import pymongo, datetime
+db = pymongo.MongoClient(host='127.0.0.1', port=27019)['StageScript']
+a = raw_input('password:')
+db.authenticate('iglobby', a, source='admin')
+mc1 = db['ScriptSchedule']
+upd = {
+    "StartTime": datetime.datetime(${MachineStartTime.getFullYear()}, ${MachineStartTime.getMonth() + 1}, ${MachineStartTime.getDate()}, ${MachineStartTime.getHours()}, ${MachineStartTime.getMinutes()}, ${MachineStartTime.getSeconds()}),
+    "EndTime": ${endTimeInScript},
+    "Version": [],
+    "InGameType": ${JSON.stringify(InGameType)},
+    "ExcludeGameType": [],
+    "Script": "${eventScript.Script}"
+}
+mc1.update({'Name': '${scheduleName}'}, {'$set': upd}, upsert=True)
+                `;
+            } else {
+                fileName = 'EventTimeSetting.sql';
+                const eventType = document.getElementById('event').value;
+                const eventTypeIndex = {
+                    "Egg": 1,
+                    "Xmas": 2,
+                    "Gow": 3,
+                    "TukTuk": 4,
+                    "DragonBoat": 5,
+                    "MustJP": 6
+                }[eventType];
+                script = `
+USE [IGaming_LegendOfPhoenix]
+GO
+-- Market = ${market}
+-- Event = ${eventType}
+
+DECLARE @oldEventID AS INT
+SELECT @oldEventID = ISNULL(MAX([EventID]),0) FROM [IGaming_LegendOfPhoenix].[dbo].[LegendOfPhoenix_FishEvent_Setting] where [EventType] = ${eventTypeIndex}
+SELECT @oldEventID+1
+
+INSERT [dbo].[LegendOfPhoenix_FishEvent_Setting] (
+            [EventType],
+            [EventID],
+            [BeginTime],
+            [EndTime],
+            [ShowBeginTime],
+            [ShowEndTime],
+            [UpdateThemeID],
+            [UpdateTime],
+            [CreateTime])
+VALUES (
+    ${eventTypeIndex},
+    @oldEventID+1,
+    CAST(N'${toISOLocal(MachineStartTime)}' AS DateTime),
+    CAST(N'${toISOLocal(MachineEndTime)}' AS DateTime),
+    CAST(N'${toISOLocal(localStartTime)}' AS DateTime),
+    CAST(N'${toISOLocal(localEndTime)}' AS DateTime),
+    37250001, GETDATE(),
+    GETDATE())
+GO
+                `;
+            }
+
+                // 根據檔案類型設定正確的 MIME 類型
+                const mimeType = fileName.endsWith('.py') ? 'text/x-python' : 'text/plain';
+                const blob = new Blob([script], { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                // 顯示成功訊息
+                showSuccess(`設定檔 "${fileName}" 已成功產生並下載`);
+                
+            } catch (error) {
+                // 錯誤處理
+                console.error('產生腳本時發生錯誤:', error);
+                showError(error.message || '產生設定檔時發生未知錯誤');
+            } finally {
+                // 結束載入狀態
+                setLoading(false);
+            }
+        }
+    </script>
+</body>
+</html>

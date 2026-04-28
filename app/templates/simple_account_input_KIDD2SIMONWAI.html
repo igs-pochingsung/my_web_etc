@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>帳號輸入</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: monospace;
+            font-size: 15px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            background-color: #222;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+
+        h1 {
+            font-size: 28px;
+            margin-bottom: 30px;
+            color: #0f0;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #ccc;
+            font-size: 16px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 15px;
+            background-color: #353539;
+            border: 1px solid #555;
+            border-radius: 5px;
+            color: #0f0;
+            font-size: 16px;
+            font-family: monospace;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #0f0;
+            box-shadow: 0 0 5px rgba(0, 255, 0, 0.3);
+        }
+
+        input[type="submit"] {
+            background-color: #40c020a3;
+            border: none;
+            border-radius: 5px;
+            color: #000;
+            font-weight: bold;
+            padding: 12px 30px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            width: 100%;
+        }
+
+        input[type="submit"]:hover {
+            background-color: #40c020;
+        }
+
+        input[type="submit"]:active {
+            transform: scale(0.98);
+        }
+
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #1a1a1a;
+            border-radius: 5px;
+            border: 1px solid #444;
+            display: none;
+        }
+
+        .result.show {
+            display: block;
+        }
+
+        .result a {
+            color: #0f0;
+            text-decoration: none;
+            word-break: break-all;
+        }
+
+        .result a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>帳號輸入</h1>
+        <form id="accountForm">
+            <div class="input-group">
+                <label for="account">帳號:</label>
+                <input type="text" id="account" name="account" required placeholder="請輸入帳號">
+            </div>
+            <input type="submit" value="生成連結">
+        </form>
+        
+        <div class="result" id="result">
+            <p>生成的連結:</p>
+            <a href="#" id="generatedUrl" target="_blank"></a>
+        </div>
+    </div>
+
+    <script>
+        // 設定要轉跳的域名基礎URL (不包含devAccount參數)
+        const BASE_URL = 'http://192.168.132.71:7456/';
+        const URL_PARAMS = 'logo=iDragon&currency=Coin&site=,http://192.168.132.70:8080,,http://192.168.132.70:18080,http://192.168.132.70:9410&game=PiggyFortunes&InternalMode=true&lang=en-us';
+        
+        // 表單提交處理
+        document.getElementById('accountForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const account = document.getElementById('account').value.trim();
+            if (!account) {
+                alert('請輸入帳號！');
+                return;
+            }
+            
+            // 生成連結，將用戶輸入的帳號替換到devAccount參數
+            const generatedUrl = `${BASE_URL}?devAccount=${encodeURIComponent(account)}&${URL_PARAMS}`;
+            
+            // 直接在新分頁中開啟連結
+            window.open(generatedUrl, '_blank', 'noopener,noreferrer');
+            
+            // 顯示結果
+            document.getElementById('generatedUrl').href = generatedUrl;
+            document.getElementById('generatedUrl').textContent = generatedUrl;
+            document.getElementById('result').classList.add('show');
+        });
+
+        // 從 localStorage 載入上次輸入的帳號
+        window.addEventListener('DOMContentLoaded', function() {
+            const savedAccount = localStorage.getItem('simpleAccount');
+            if (savedAccount) {
+                document.getElementById('account').value = savedAccount;
+            }
+        });
+
+        // 儲存帳號到 localStorage
+        document.getElementById('account').addEventListener('blur', function() {
+            if (this.value.trim()) {
+                localStorage.setItem('simpleAccount', this.value.trim());
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+version: '3' # 目前使用的版本，可以參考官網：
+services: # services 關鍵字後面列出 web, redis 兩項專案中的服務
+  web: # service 名稱
+    build: .
+    ports:
+      - "5487:5487" # 外部露出開放的 port 對應到 docker container 的 port
+    volumes:
+      - ./app:/code # 要從本地資料夾 mount 掛載進去的資料
+    command: python OpenWebFlaskApp.py
+#		networks:
+#      - ark # 連結到 network，讓兩個 container 可以互通網路
+
+#networks:
+#  ark: # 建立 network
+#    driver: bridge
