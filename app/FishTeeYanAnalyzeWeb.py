@@ -55,6 +55,32 @@ DEFAULT_MONGO_URI = os.getenv(
 # 不要再使用舊版 `authenticate()`（PyMongo 4 已移除，會導致 "Database object is not callable"）。
 DEFAULT_MONGO_DB = os.getenv("MONGO_DB", "BackendLog")
 
+
+# Mongo 連線預設：用 db_env 切換資料來源（供頁面上 bar 選單使用）
+#
+# - macross-test：原本的連線設定
+# - sssapi-test：若設定了 SSSAPI_MONGO_URI 就直接用；否則嘗試把 DEFAULT_MONGO_URI 裡的
+#   "macross-platdb-test" 取代成 "sssapi-platdb-test"
+SSSAPI_MONGO_URI = os.getenv(
+    "SSSAPI_MONGO_URI", 
+    "mongodb+srv://game-logdb-test:q1UecL27ENaoJq2m@game-alldb-test.bnsgty.mongodb.net/admin"
+    "?retryWrites=true&loadBalanced=false&replicaSet=atlas-tr9h25-shard-0&readPreference=primary"
+    "&srvServiceName=mongodb&connectTimeoutMS=10000&w=majority&authSource=admin&authMechanism=SCRAM-SHA-1"
+)
+# SSSAPI_MONGO_URI = os.getenv("SSSAPI_MONGO_URI", "").strip()
+# if not SSSAPI_MONGO_URI and "macross-platdb-test" in DEFAULT_MONGO_URI:
+#     SSSAPI_MONGO_URI = DEFAULT_MONGO_URI.replace("macross-platdb-test", "sssapi-platdb-test")
+# if not SSSAPI_MONGO_URI:
+#     SSSAPI_MONGO_URI = DEFAULT_MONGO_URI
+
+DB_PRESETS: dict[str, dict[str, str]] = {
+    "macross-test": {"mongo_uri": DEFAULT_MONGO_URI, "mongo_db": DEFAULT_MONGO_DB},
+    "sssapi-test": {"mongo_uri": SSSAPI_MONGO_URI, "mongo_db": DEFAULT_MONGO_DB},
+}
+
+# 預先建立的 MongoDB handle（服務啟動時初始化兩套）
+_MONGO_DBS: dict[str, Any] = {}
+
 # 事件判定（可用環境變數覆寫，或直接改 code）
 DEFAULT_BIG_WIN_THRESHOLD = float(os.getenv("BIG_WIN_THRESHOLD", "0"))  # 0 = disable
 DEFAULT_BIG_MULT_THRESHOLD = float(os.getenv("BIG_MULT_THRESHOLD", "100"))  # 0 = disable
@@ -1717,8 +1743,10 @@ TEMPLATE_NAME = "FishTeeYanAnalyze.html"
 
 
 def _handle_play_fish_analyze():
-    mongo_uri = DEFAULT_MONGO_URI
-    mongo_db = DEFAULT_MONGO_DB
+    db_env = (request.args.get("db_env", "macross-test") or "macross-test").strip()
+    preset = DB_PRESETS.get(db_env) or DB_PRESETS["macross-test"]
+    mongo_uri = preset["mongo_uri"]
+    mongo_db = preset["mongo_db"]
     date = request.args.get("date", datetime.now().strftime("%Y-%m-%d"))
     player = request.args.get("player", "")
     start_time = request.args.get("start_time", "00:00")
@@ -1749,7 +1777,10 @@ def _handle_play_fish_analyze():
     if active_tab == "playtime":
         if player.strip():
             try:
-                mdb = _build_mongo(mongo_uri, mongo_db)
+                mdb = _MONGO_DBS.get(db_env)
+                if mdb is None:
+                    # fallback：若初始化失敗/尚未初始化，才懶載入
+                    mdb = _build_mongo(mongo_uri, mongo_db)
                 # 往回搜尋近 N 天
                 today_local = datetime.now(timezone(timedelta(hours=INPUT_TZ_OFFSET_HOURS))).date()
                 q_player = player.strip()
@@ -1825,12 +1856,14 @@ def _handle_play_fish_analyze():
             meta="",
             inout_rows=inout_rows,
             playtime_days=PLAYTIME_SEARCH_DAYS,
+            db_env=db_env,
         )
 
     # 只有在使用者真的按了參數（至少 player 有填）才跑分析查詢，避免一開頁就打 DB
     if (not defer) and player.strip():
         # 查詢快取 key（同條件 5 分鐘內秒回）
         cache_key = (
+            db_env,
             date,
             player.strip(),
             start_time,
@@ -1861,6 +1894,7 @@ def _handle_play_fish_analyze():
                     meta=meta,
                     inout_rows=[],
                     playtime_days=PLAYTIME_SEARCH_DAYS,
+                    db_env=db_env,
                 )
 
         try:
@@ -1883,11 +1917,15 @@ def _handle_play_fish_analyze():
                 meta="",
                 inout_rows=[],
                 playtime_days=PLAYTIME_SEARCH_DAYS,
+                db_env=db_env,
             )
 
         try:
             start_dt, end_dt = _build_time_range_utc(date, start_time, end_time)
-            mdb = _build_mongo(mongo_uri, mongo_db)
+            mdb = _MONGO_DBS.get(db_env)
+            if mdb is None:
+                # fallback：若初始化失敗/尚未初始化，才懶載入
+                mdb = _build_mongo(mongo_uri, mongo_db)
             players = _resolve_players(mdb, date_key, player.strip())
 
             bw = float(big_win)
@@ -1998,6 +2036,7 @@ def _handle_play_fish_analyze():
         meta=meta + (" | cache=BYPASS" if refresh else " | cache=MISS"),
         inout_rows=[],
         playtime_days=PLAYTIME_SEARCH_DAYS,
+        db_env=db_env,
     )
 
 
@@ -2008,6 +2047,14 @@ def init_play_fish_analyze_routes(flask_app: Flask) -> None:
     - GET /PlayFishAnalyze
     - GET /PlayFishAnalyze/ (redirect-safe alias)
     """
+    global _MONGO_DBS  # noqa: PLW0603
+    if not _MONGO_DBS:
+        # 服務啟動時就建立兩個 MongoDB handle（符合你要的「運作起來就都準備好」）
+        for env, preset in DB_PRESETS.items():
+            try:
+                _MONGO_DBS[env] = _build_mongo(preset["mongo_uri"], preset["mongo_db"])
+            except Exception as e:
+                print(f"[FishTeeYanAnalyzeWeb] Mongo init failed for {env}: {type(e).__name__}: {e}")
 
     @flask_app.route("/PlayFishAnalyze", methods=["GET"], endpoint="play_fish_analyze")
     def play_fish_analyze():  # noqa: F811

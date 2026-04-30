@@ -11,15 +11,26 @@
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .plotly-graph-div { width: 100% !important; }
     #loadingOverlay { z-index: 2000; }
+    /* 更淺的 placeholder 色（比 text-secondary 更淡） */
+    .form-control::placeholder { color: rgba(108,117,125,0.55); opacity: 1; }
   </style>
 </head>
 <body class="bg-body-tertiary">
   <nav class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
     <div class="container">
       <a class="navbar-brand fw-semibold" href="{{ url_for('play_fish_analyze') }}">Fish 玩家遊玩狀況分析</a>
-      <div class="ms-auto small text-secondary">
-        <span class="badge text-bg-light border">Plotly</span>
-        <span class="badge text-bg-light border">Mongo</span>
+      <div class="ms-auto d-flex align-items-center gap-3">
+        <div class="small text-secondary d-flex align-items-center gap-2">
+          <span class="badge text-bg-light border">Plotly</span>
+          <span class="badge text-bg-light border">Mongo</span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <span class="small text-secondary">DB</span>
+          <select class="form-select form-select-sm" name="db_env" id="db_env" aria-label="db env">
+            <option value="macross-test" {% if db_env == 'macross-test' %}selected{% endif %}>macross-test</option>
+            <option value="sssapi-test" {% if db_env == 'sssapi-test' %}selected{% endif %}>sssapi-test</option>
+          </select>
+        </div>
       </div>
     </div>
   </nav>
@@ -59,6 +70,7 @@
             {% if active_tab == 'playtime' %}
               <form id="inoutForm" method="get" action="{{ url_for('play_fish_analyze') }}" class="row g-3 align-items-end">
                 <input type="hidden" name="tab" value="playtime" />
+                <input type="hidden" name="db_env" value="{{ db_env }}" />
                 <div class="col-12 col-md-6">
                   <label class="form-label">玩家</label>
                   <input name="player" class="form-control" value="{{ player }}" placeholder="ArkID / UID / NickName / MerchantUserAccount" />
@@ -83,7 +95,7 @@
                         <th>遊戲</th>
                         <th>開始（本地）</th>
                         <th>結束（本地）</th>
-                        <th>套用到詳細分析</th>
+                        <th>進行詳細分析</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -96,8 +108,8 @@
                           <td class="mono">{{ r.end_local }}</td>
                           <td>
                             <a class="btn btn-sm btn-outline-secondary"
-                               href="{{ url_for('play_fish_analyze') }}?tab=detail&defer=1&auto=1&date={{ r.date }}&player={{ r.player_for_analysis }}&start_time={{ r.start_rounded }}&end_time={{ r.end_rounded }}&big_win={{ big_win }}&big_mult={{ big_mult }}&special_fish={{ special_fish }}">
-                              套用
+                               href="{{ url_for('play_fish_analyze') }}?tab=detail&defer=1&auto=1&db_env={{ db_env }}&date={{ r.date }}&player={{ r.player_for_analysis }}&start_time={{ r.start_rounded }}&end_time={{ r.end_rounded }}&big_win={{ big_win }}&big_mult={{ big_mult }}&special_fish={{ special_fish }}">
+                              分析
                             </a>
                           </td>
                         </tr>
@@ -105,15 +117,17 @@
                     </tbody>
                   </table>
                 </div>
-                <div class="small text-secondary">
-                  「套用」會把開始時間向下取整到 10 分鐘、結束時間向上取整到 10 分鐘（本地時間）。
-                </div>
               {% else %}
-                <div class="small text-secondary mt-3">請輸入玩家後查詢。</div>
+                {% if player and player|trim %}
+                  <div class="small text-secondary mt-3">查無資料（此玩家在選定時間/日期範圍內沒有 InOut 紀錄）。</div>
+                {% else %}
+                  <div class="small text-secondary mt-3">請輸入玩家後查詢。</div>
+                {% endif %}
               {% endif %}
             {% else %}
             <form id="queryForm" method="get" action="{{ url_for('play_fish_analyze') }}" class="row g-3 align-items-end">
               <input type="hidden" name="tab" value="detail" />
+              <input type="hidden" name="db_env" value="{{ db_env }}" />
               <!-- 第 1 行：日期 / 開始時間 / 結束時間 -->
               <div class="col-12">
                 <div class="row g-3 align-items-end">
@@ -156,7 +170,7 @@
                   <div class="col-12 col-md-8">
                     <label class="form-label">玩家</label>
                     <input name="player" class="form-control" value="{{ player }}" placeholder="ArkID / UID / NickName / MerchantUserAccount" />
-                    <div class="form-text">NickName 查到多個 ArkID 時會分成多張圖。</div>
+                    <div class="form-text text-body-tertiary">NickName 查到多個 ArkID 時會分成多張圖。</div>
                   </div>
                   <div class="col-6 col-md-2 d-grid align-self-center">
                     <button type="submit" class="btn btn-primary">分析</button>
@@ -213,9 +227,11 @@
             {% endfor %}
           </div>
         {% else %}
-          <div class="card shadow-sm">
-            <div class="card-body text-secondary">請輸入日期與玩家後按「分析」。</div>
-          </div>
+          {% if active_tab == 'detail' %}
+            <div class="card shadow-sm">
+              <div class="card-body text-secondary">請輸入日期與玩家後按「分析」。</div>
+            </div>
+          {% endif %}
         {% endif %}
       </div>
     </div>
@@ -245,6 +261,16 @@
       }
       document.addEventListener('DOMContentLoaded', function () {
         hideLoading();
+        var sel = document.getElementById('db_env');
+        if (sel) {
+          sel.addEventListener('change', function () {
+            try {
+              var url = new URL(window.location.href);
+              url.searchParams.set('db_env', sel.value);
+              window.location.href = url.toString();
+            } catch (e) {}
+          });
+        }
         var form = document.getElementById('queryForm');
         if (form) {
           form.addEventListener('submit', function () {
