@@ -22,10 +22,12 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import pymongo
 from flask import Flask, request, render_template
+
+from DBConnect import get_db_conn, list_envs
 
 try:
     import plotly.graph_objects as go
@@ -45,15 +47,11 @@ WEB_PORT = int(os.getenv("WEB_PORT", "8799"))
 INPUT_TZ_OFFSET_HOURS = int(os.getenv("INPUT_TZ_OFFSET_HOURS", "8"))
 PLAYTIME_SEARCH_DAYS = int(os.getenv("PLAYTIME_SEARCH_DAYS", "14"))
 
-DEFAULT_MONGO_URI = os.getenv(
-    "MONGO_URI",
-    "mongodb+srv://game-logdb-test:UoZFDr80dpwTh9hb@macross-platdb-test.byjat.mongodb.net/admin"
-    "?retryWrites=true&loadBalanced=false&replicaSet=atlas-ldah2p-shard-0&readPreference=primary"
-    "&srvServiceName=mongodb&connectTimeoutMS=10000&w=majority&authSource=admin&authMechanism=SCRAM-SHA-1",
-)
+_MACROSS = get_db_conn("FishTeeYanAnalyzeWeb", "macross-test")
+DEFAULT_MONGO_URI = str(_MACROSS.get("mongo_uri", "")).strip()
 # 帳密請放在 MONGO_URI 內（例如 mongodb+srv://user:pwd@.../admin）。
 # 不要再使用舊版 `authenticate()`（PyMongo 4 已移除，會導致 "Database object is not callable"）。
-DEFAULT_MONGO_DB = os.getenv("MONGO_DB", "BackendLog")
+DEFAULT_MONGO_DB = str(_MACROSS.get("mongo_db", os.getenv("MONGO_DB", "BackendLog"))).strip()
 
 
 # Mongo 連線預設：用 db_env 切換資料來源（供頁面上 bar 選單使用）
@@ -61,22 +59,27 @@ DEFAULT_MONGO_DB = os.getenv("MONGO_DB", "BackendLog")
 # - macross-test：原本的連線設定
 # - sssapi-test：若設定了 SSSAPI_MONGO_URI 就直接用；否則嘗試把 DEFAULT_MONGO_URI 裡的
 #   "macross-platdb-test" 取代成 "sssapi-platdb-test"
-SSSAPI_MONGO_URI = os.getenv(
-    "SSSAPI_MONGO_URI", 
-    "mongodb+srv://game-logdb-test:q1UecL27ENaoJq2m@game-alldb-test.bnsgty.mongodb.net/admin"
-    "?retryWrites=true&loadBalanced=false&replicaSet=atlas-tr9h25-shard-0&readPreference=primary"
-    "&srvServiceName=mongodb&connectTimeoutMS=10000&w=majority&authSource=admin&authMechanism=SCRAM-SHA-1"
-)
+_SSSAPI = get_db_conn("FishTeeYanAnalyzeWeb", "sssapi-test")
+SSSAPI_MONGO_URI = str(_SSSAPI.get("mongo_uri", DEFAULT_MONGO_URI)).strip()
 # SSSAPI_MONGO_URI = os.getenv("SSSAPI_MONGO_URI", "").strip()
 # if not SSSAPI_MONGO_URI and "macross-platdb-test" in DEFAULT_MONGO_URI:
 #     SSSAPI_MONGO_URI = DEFAULT_MONGO_URI.replace("macross-platdb-test", "sssapi-platdb-test")
 # if not SSSAPI_MONGO_URI:
 #     SSSAPI_MONGO_URI = DEFAULT_MONGO_URI
 
-DB_PRESETS: dict[str, dict[str, str]] = {
-    "macross-test": {"mongo_uri": DEFAULT_MONGO_URI, "mongo_db": DEFAULT_MONGO_DB},
-    "sssapi-test": {"mongo_uri": SSSAPI_MONGO_URI, "mongo_db": DEFAULT_MONGO_DB},
-}
+DB_PRESETS: dict[str, dict[str, str]] = {}
+for _env in list_envs("FishTeeYanAnalyzeWeb"):
+    if _env == "default":
+        continue
+    _cfg = get_db_conn("FishTeeYanAnalyzeWeb", _env)
+    if not _cfg:
+        continue
+    DB_PRESETS[_env] = {
+        "mongo_uri": str(_cfg.get("mongo_uri", "")).strip(),
+        "mongo_db": str(_cfg.get("mongo_db", DEFAULT_MONGO_DB)).strip(),
+    }
+if "macross-test" not in DB_PRESETS:
+    DB_PRESETS["macross-test"] = {"mongo_uri": DEFAULT_MONGO_URI, "mongo_db": DEFAULT_MONGO_DB}
 
 # 預先建立的 MongoDB handle（服務啟動時初始化兩套）
 _MONGO_DBS: dict[str, Any] = {}
@@ -1742,6 +1745,242 @@ def _build_figure(
 TEMPLATE_NAME = "FishTeeYanAnalyze.html"
 
 
+def _stats_row_key(game: str, ark_id: str, user_id: str) -> str:
+    """Stable GET-safe key for ignore checkboxes (no raw '|' in parts)."""
+    g = quote(str(game or ""), safe="")
+    a = quote(str(ark_id or ""), safe="")
+    u = quote(str(user_id or ""), safe="")
+    return f"{g}::{a}::{u}"
+
+
+def _load_inout_spans_by_ark_us(
+    mdb,
+    date_key: str,
+    start_us: int,
+    end_us: int,
+) -> dict[str, list[tuple[int, int, str]]]:
+    """
+    讀 FishPlayerInOutTime，回傳每個 ArkID 的 (EnterTs, LeaveTs, game_label) 列表（microseconds）。
+    只取與查詢時間窗有重疊的紀錄。
+    """
+    col = mdb.get_collection(f"FishPlayerInOutTime_{date_key}")
+    q = {"$and": [{"EnterTs": {"$lte": int(end_us)}}, {"LeaveTs": {"$gte": int(start_us)}}]}
+    cursor = col.find(
+        q,
+        {"_id": 0, "ArkID": 1, "EnterTs": 1, "LeaveTs": 1, "GameName": 1, "StageName": 1},
+    ).sort("EnterTs", pymongo.ASCENDING)
+
+    out: dict[str, list[tuple[int, int, str]]] = {}
+    for doc in cursor:
+        ark = doc.get("ArkID")
+        if ark is None:
+            continue
+        ent = doc.get("EnterTs")
+        lev = doc.get("LeaveTs")
+        if ent is None or lev is None:
+            continue
+        try:
+            s = int(ent)
+            e = int(lev)
+        except Exception:
+            continue
+        if e < s:
+            s, e = e, s
+        label = (doc.get("GameName") or doc.get("StageName") or "").strip() or "in game"
+        ark_s = str(ark)
+        out.setdefault(ark_s, []).append((s, e, label))
+    for ark_s, spans in out.items():
+        spans.sort(key=lambda t: t[0])
+    return out
+
+
+def _game_from_inout(spans: list[tuple[int, int, str]], ts_us: int) -> Optional[str]:
+    """若 ts 落在任一 in-out 區間，回傳該區間 label（先命中先回傳）。"""
+    for s, e, lab in spans:
+        if s <= ts_us <= e:
+            return lab
+    return None
+
+
+def _aggregate_fish_stats_by_game_player(
+    mdb,
+    date_key: str,
+    start_us: int,
+    end_us: int,
+    game_substring: str = "",
+) -> list[dict[str, Any]]:
+    """
+    以 DetailBetWinFishRaw 彙總：遊戲 × 玩家。
+    遊戲名優先取文件 GameName/StageName；否則用 FishPlayerInOutTime 對 CreateTs 對應。
+    """
+    col = mdb.get_collection(f"DetailBetWinFishRaw_{date_key}")
+    inout_by_ark = _load_inout_spans_by_ark_us(mdb, date_key, start_us, end_us)
+
+    filt = (game_substring or "").strip().lower()
+
+    # key: (game_label, ark_id, user_id)
+    buckets: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+    q: dict[str, Any] = {"CreateTs": {"$gte": int(start_us), "$lte": int(end_us)}}
+    cursor = col.find(
+        q,
+        {
+            "_id": 0,
+            "ArkID": 1,
+            "UserID": 1,
+            "NickName": 1,
+            "CreateTs": 1,
+            "GameName": 1,
+            "StageName": 1,
+            "BetAmount": 1,
+            "WinAmount": 1,
+            "OriginalBet": 1,
+            "BetCount": 1,
+            "WinCount": 1,
+        },
+        batch_size=500,
+    )
+
+    for doc in cursor:
+        ts = doc.get("CreateTs")
+        if ts is None:
+            continue
+        try:
+            ts_i = int(ts)
+        except Exception:
+            continue
+
+        ark = doc.get("ArkID")
+        ark_s = str(ark) if ark is not None else ""
+        uid = doc.get("UserID")
+        uid_s = str(uid) if uid is not None else ""
+        nick = doc.get("NickName")
+        nick_s = str(nick) if nick is not None else ""
+
+        gdoc = (str(doc.get("GameName") or "").strip() or str(doc.get("StageName") or "").strip())
+        if gdoc:
+            game_label = gdoc
+        else:
+            spans = inout_by_ark.get(ark_s, [])
+            game_label = _game_from_inout(spans, ts_i) or "(未對應進出表)"
+
+        if filt and filt not in game_label.lower():
+            continue
+
+        ba = _safe_float(doc.get("BetAmount")) or 0.0
+        wa = _safe_float(doc.get("WinAmount")) or 0.0
+        ob = _safe_float(doc.get("OriginalBet"))
+        try:
+            bc = int(doc.get("BetCount") or 0)
+        except Exception:
+            bc = 0
+        try:
+            wc = int(doc.get("WinCount") or 0)
+        except Exception:
+            wc = 0
+
+        key = (game_label, ark_s, uid_s)
+        agg = buckets.setdefault(
+            key,
+            {
+                "game": game_label,
+                "ark_id": ark_s,
+                "user_id": uid_s,
+                "nicknames": set(),
+                "total_bet": 0.0,
+                "total_win": 0.0,
+                "total_original_bet": 0.0,  # sum(OriginalBet * BetCount)
+                "bet_count": 0,
+                "win_count": 0,
+                "row_count": 0,
+            },
+        )
+        if nick_s:
+            agg["nicknames"].add(nick_s)
+        agg["total_bet"] += float(ba)
+        agg["total_win"] += float(wa)
+        if ob is not None and bc > 0:
+            agg["total_original_bet"] += float(ob) * float(bc)
+        agg["bet_count"] += bc
+        agg["win_count"] += wc
+        agg["row_count"] += 1
+
+    rows: list[dict[str, Any]] = []
+    for (_g, ark_s, uid_s), agg in buckets.items():
+        tb = float(agg["total_bet"])
+        tw = float(agg["total_win"])
+        net = tw - tb
+        rtp = (tw / tb) if tb > 0 else None
+        rtp_pct = (rtp * 100.0) if rtp is not None else None
+        tob = float(agg["total_original_bet"] or 0.0)
+        srtp = (tw / tob) if tob > 0 else None
+        srtp_pct = (srtp * 100.0) if srtp is not None else None
+        nick_display = ", ".join(sorted(agg["nicknames"])) if agg["nicknames"] else "-"
+        game = str(agg["game"])
+        row_key = _stats_row_key(game, ark_s, uid_s)
+        rows.append(
+            {
+                "row_key": row_key,
+                "game": game,
+                "ark_id": ark_s or "-",
+                "user_id": uid_s or "-",
+                "nickname": nick_display,
+                "total_bet": tb,
+                "total_win": tw,
+                "net": net,
+                "total_original_bet": tob,
+                "bet_count": int(agg["bet_count"]),
+                "win_count": int(agg["win_count"]),
+                "row_count": int(agg["row_count"]),
+                "rtp": rtp,
+                "rtp_pct": rtp_pct,
+                "srtp": srtp,
+                "srtp_pct": srtp_pct,
+                "win_rate": (int(agg["win_count"]) / int(agg["bet_count"])) if int(agg["bet_count"]) > 0 else None,
+                "hit_pct": (float(agg["win_count"]) / float(agg["bet_count"]) * 100.0)
+                if int(agg["bet_count"]) > 0
+                else None,
+            }
+        )
+
+    rows.sort(key=lambda r: (r["game"].lower(), -r["total_bet"], r["ark_id"]))
+    return rows
+
+
+def _stats_overall(rows: list[dict[str, Any]], ignored_keys: set[str]) -> dict[str, Any]:
+    tb = tw = 0.0
+    tob = 0.0
+    bc = wc = rc = 0
+    for r in rows:
+        if r.get("row_key") in ignored_keys:
+            continue
+        tb += float(r.get("total_bet") or 0.0)
+        tw += float(r.get("total_win") or 0.0)
+        tob += float(r.get("total_original_bet") or 0.0)
+        bc += int(r.get("bet_count") or 0)
+        wc += int(r.get("win_count") or 0)
+        rc += int(r.get("row_count") or 0)
+    net = tw - tb
+    rtp = (tw / tb) if tb > 0 else None
+    srtp = (tw / tob) if tob > 0 else None
+    win_rate = (wc / bc) if bc > 0 else None
+    return {
+        "total_bet": tb,
+        "total_win": tw,
+        "net": net,
+        "bet_count": bc,
+        "win_count": wc,
+        "row_count": rc,
+        "rtp": rtp,
+        "rtp_pct": (rtp * 100.0) if rtp is not None else None,
+        "srtp": srtp,
+        "srtp_pct": (srtp * 100.0) if srtp is not None else None,
+        "win_rate": win_rate,
+        "hit_pct": (win_rate * 100.0) if win_rate is not None else None,
+        "included_rows": sum(1 for r in rows if r.get("row_key") not in ignored_keys),
+    }
+
+
 def _handle_play_fish_analyze():
     db_env = (request.args.get("db_env", "macross-test") or "macross-test").strip()
     preset = DB_PRESETS.get(db_env) or DB_PRESETS["macross-test"]
@@ -1765,13 +2004,20 @@ def _handle_play_fish_analyze():
     meta = ""
     inout_rows = []
 
-    # 分頁切換保留上次資訊（排除 tab/auto/defer）
-    qs_dict = {}
-    for k, v in request.args.items():
-        if k in ("tab", "auto", "defer"):
+    # 分頁切換保留上次資訊（排除 tab/auto/defer/忽略勾選）
+    qs_pairs: list[tuple[str, str]] = []
+    for k in request.args:
+        if k in ("tab", "auto", "defer", "stat_ignore", "stats_run"):
             continue
-        qs_dict[k] = v
-    qs = urlencode(qs_dict, doseq=True)
+        for v in request.args.getlist(k):
+            qs_pairs.append((k, v))
+    qs = urlencode(qs_pairs, doseq=True)
+
+    stats_game = (request.args.get("stats_game") or "").strip()
+    stat_ignore_keys = {x for x in request.args.getlist("stat_ignore") if x.strip()}
+    stats_rows: list[dict[str, Any]] = []
+    stats_overall: Optional[dict[str, Any]] = None
+    stats_ran = request.args.get("stats_run", "") in ("1", "true", "True", "yes", "Y")
 
     # 遊玩時間查詢：跨日搜尋 InOutTime，提供套用到詳細分析的連結
     if active_tab == "playtime":
@@ -1842,6 +2088,10 @@ def _handle_play_fish_analyze():
 
         return render_template(
             TEMPLATE_NAME,
+            brand_title="Fish 玩家遊玩狀況分析",
+            brand_url="/PlayFishAnalyze",
+            active_route="play_fish_analyze",
+            show_env_select=True,
             active_tab="playtime",
             qs=qs,
             date=date,
@@ -1857,6 +2107,73 @@ def _handle_play_fish_analyze():
             inout_rows=inout_rows,
             playtime_days=PLAYTIME_SEARCH_DAYS,
             db_env=db_env,
+            stats_rows=[],
+            stats_overall=None,
+            stats_game=stats_game,
+            stat_ignore_keys=stat_ignore_keys,
+            stats_ran=False,
+        )
+
+    if active_tab == "stats":
+        if stats_ran:
+            try:
+                date_key = _to_date_key(date)
+            except Exception:
+                warning = "日期格式錯誤，請用 YYYY-MM-DD"
+                stats_rows = []
+                stats_overall = _stats_overall([], set())
+            else:
+                try:
+                    start_dt, end_dt = _build_time_range_utc(date, start_time, end_time)
+                    start_us = int(start_dt.timestamp() * 1_000_000)
+                    end_us = int(end_dt.timestamp() * 1_000_000)
+                    mdb = _MONGO_DBS.get(db_env)
+                    if mdb is None:
+                        mdb = _build_mongo(mongo_uri, mongo_db)
+                    stats_rows = _aggregate_fish_stats_by_game_player(
+                        mdb, date_key, start_us, end_us, game_substring=stats_game
+                    )
+                    stats_overall = _stats_overall(stats_rows, stat_ignore_keys)
+                    meta = (
+                        f"統計 | DetailBetWinFishRaw_{date_key} | UTC "
+                        f"{start_dt.strftime('%H:%M')}-{end_dt.strftime('%H:%M')} | "
+                        f"groups={len(stats_rows)} ignored={len(stat_ignore_keys)}"
+                    )
+                except Exception as e:
+                    print("=== FishTeeYanAnalyzeWeb stats error ===")
+                    print(traceback.format_exc())
+                    warning = f"統計查詢失敗：{type(e).__name__}: {e}"
+                    stats_rows = []
+                    stats_overall = _stats_overall([], set())
+        else:
+            stats_overall = None
+
+        return render_template(
+            TEMPLATE_NAME,
+            brand_title="Fish 玩家遊玩狀況分析",
+            brand_url="/PlayFishAnalyze",
+            active_route="play_fish_analyze",
+            show_env_select=True,
+            active_tab="stats",
+            qs=qs,
+            date=date,
+            player=player,
+            start_time=start_time,
+            end_time=end_time,
+            big_win=big_win,
+            big_mult=big_mult,
+            special_fish=special_fish,
+            warning=warning,
+            charts=[],
+            meta=meta,
+            inout_rows=[],
+            playtime_days=PLAYTIME_SEARCH_DAYS,
+            db_env=db_env,
+            stats_rows=stats_rows,
+            stats_overall=stats_overall,
+            stats_game=stats_game,
+            stat_ignore_keys=stat_ignore_keys,
+            stats_ran=stats_ran,
         )
 
     # 只有在使用者真的按了參數（至少 player 有填）才跑分析查詢，避免一開頁就打 DB
@@ -1880,6 +2197,10 @@ def _handle_play_fish_analyze():
                 meta = (cached.get("meta", "") or "") + " | cache=HIT"
                 return render_template(
                     TEMPLATE_NAME,
+                    brand_title="Fish 玩家遊玩狀況分析",
+                    brand_url="/PlayFishAnalyze",
+                    active_route="play_fish_analyze",
+                    show_env_select=True,
                     active_tab="detail",
                     qs=qs,
                     date=date,
@@ -1895,6 +2216,11 @@ def _handle_play_fish_analyze():
                     inout_rows=[],
                     playtime_days=PLAYTIME_SEARCH_DAYS,
                     db_env=db_env,
+                    stats_rows=[],
+                    stats_overall=None,
+                    stats_game=stats_game,
+                    stat_ignore_keys=stat_ignore_keys,
+                    stats_ran=False,
                 )
 
         try:
@@ -1903,6 +2229,10 @@ def _handle_play_fish_analyze():
             warning = "日期格式錯誤，請用 YYYY-MM-DD"
             return render_template(
                 TEMPLATE_NAME,
+                brand_title="Fish 玩家遊玩狀況分析",
+                brand_url="/PlayFishAnalyze",
+                active_route="play_fish_analyze",
+                show_env_select=True,
                 active_tab="detail",
                 qs=qs,
                 date=date,
@@ -1918,6 +2248,11 @@ def _handle_play_fish_analyze():
                 inout_rows=[],
                 playtime_days=PLAYTIME_SEARCH_DAYS,
                 db_env=db_env,
+                stats_rows=[],
+                stats_overall=None,
+                stats_game=stats_game,
+                stat_ignore_keys=stat_ignore_keys,
+                stats_ran=False,
             )
 
         try:
@@ -2022,6 +2357,10 @@ def _handle_play_fish_analyze():
 
     return render_template(
         TEMPLATE_NAME,
+        brand_title="Fish 玩家遊玩狀況分析",
+        brand_url="/PlayFishAnalyze",
+        active_route="play_fish_analyze",
+        show_env_select=True,
         active_tab="detail",
         qs=qs,
         date=date,
@@ -2037,6 +2376,11 @@ def _handle_play_fish_analyze():
         inout_rows=[],
         playtime_days=PLAYTIME_SEARCH_DAYS,
         db_env=db_env,
+        stats_rows=[],
+        stats_overall=None,
+        stats_game=stats_game,
+        stat_ignore_keys=stat_ignore_keys,
+        stats_ran=False,
     )
 
 

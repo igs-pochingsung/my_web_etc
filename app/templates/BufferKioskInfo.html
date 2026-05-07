@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Kiosk Buffer 資訊</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <style>
+    .kiosk-ctrl-lv-box { background: rgba(0,0,0,.02); opacity: .35; }
+    .kiosk-ctrl-lv-box.is-active { opacity: 1; }
+  </style>
+</head>
+<body class="bg-light">
+  {% include "_topbar.html" with context %}
+
+  <div class="container py-4">
+    <div class="row g-3">
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+              <div>
+                <div class="fw-semibold">查詢條件</div>
+                <div class="small text-secondary">預設不會自動查 DB，避免正式機流量。</div>
+              </div>
+              <div class="small text-secondary">
+                <span class="badge text-bg-secondary">cache: {{ cache_status }}</span>
+              </div>
+            </div>
+
+            <form class="mt-3" method="get" action="/KioskBufferInfo">
+              <input type="hidden" name="db_env" value="{{ db_env }}" />
+              <div class="row g-2">
+                <div class="col-12 col-md-4">
+                  <label class="form-label form-label-sm">Theme（從 KioskBufferSetting 取得）</label>
+                  <select class="form-select form-select-sm" name="theme">
+                    <option value="">（請選擇）</option>
+                    {% for t in theme_options %}
+                      <option value="{{ t }}" {% if selected_theme == t %}selected{% endif %}>{{ t }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+
+                <div class="col-12 col-md-4">
+                  <label class="form-label form-label-sm">搜尋（ApiName / 商戶名稱 / 商戶ID / 幣種）</label>
+                  <div class="row g-2">
+                    <div class="col-6">
+                      <input class="form-control form-control-sm" name="api_name" value="{{ q_api_name }}" placeholder="ApiName" />
+                    </div>
+                    <div class="col-6">
+                      <input class="form-control form-control-sm" name="merchant_name" value="{{ q_merchant_name }}" placeholder="商戶名稱" />
+                    </div>
+                    <div class="col-6">
+                      <input class="form-control form-control-sm" name="merchant_id" value="{{ q_merchant_id }}" placeholder="商戶ID" />
+                    </div>
+                    <div class="col-6">
+                      <input class="form-control form-control-sm" name="currency" value="{{ q_currency }}" placeholder="幣種" />
+                    </div>
+                  </div>
+                </div>
+
+                <div class="col-12 col-md-4 d-flex align-items-end">
+                  <div class="d-flex flex-column gap-2 w-100">
+                    <div class="form-check">
+                      <input class="form-check-input" type="checkbox" value="1" id="include_disabled" name="include_disabled"
+                             {% if include_disabled %}checked{% endif %}>
+                      <label class="form-check-label small" for="include_disabled">
+                        含停用（Enable=false）
+                      </label>
+                    </div>
+                    <div class="form-check">
+                      <input class="form-check-input" type="checkbox" value="1" id="show_all" name="show_all"
+                             {% if show_all_merchants %}checked{% endif %}>
+                      <label class="form-check-label small" for="show_all">
+                        顯示未砍牌商戶（顯示全部）
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="col-12 col-md-4 d-flex align-items-end gap-2">
+                  <button type="submit" class="btn btn-sm btn-primary">查詢</button>
+                  <a class="btn btn-sm btn-outline-secondary"
+                     href="/KioskBufferInfo?theme={{ selected_theme }}&include_disabled={{ '1' if include_disabled else '0' }}&show_all={{ '1' if show_all_merchants else '0' }}&api_name={{ q_api_name }}&merchant_name={{ q_merchant_name }}&merchant_id={{ q_merchant_id }}&currency={{ q_currency }}&refresh=1">
+                    強制刷新（略過快取）
+                  </a>
+                  <a class="btn btn-sm btn-outline-dark" href="/KioskBufferInfo">清空</a>
+                </div>
+              </div>
+            </form>
+
+            {% if warning %}
+              <div class="alert alert-danger mt-3 mb-0">{{ warning }}</div>
+            {% endif %}
+            {% if meta %}
+              <div class="small text-secondary mt-2">{{ meta }}</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-header bg-white">
+            <div class="fw-semibold">商戶Buffer值</div>
+            <div class="small text-secondary">DB: Buffer.KioskBufferValue</div>
+          </div>
+          <div class="card-body">
+            {% if merchant_rows and merchant_rows|length > 0 %}
+              <div class="table-responsive">
+                <table class="table table-sm table-striped align-middle">
+                  <thead>
+                    <tr class="text-secondary">
+                      <th>ApiName</th>
+                      <th>商戶名稱<br><span class="fw-normal">merchant_name</span></th>
+                      <th>商戶ID<br><span class="fw-normal">merchant_id</span></th>
+                      <th class="text-center">幣種<br><span class="fw-normal">Currency</span></th>
+                      <th class="text-end">Buffer值<br><span class="fw-normal">BufferValue</span></th>
+                      <th class="text-center" style="min-width: 140px;">砍牌階段</th>
+                      <th style="min-width: 420px;">砍牌設定</th>
+                      <th>UpdateTime</th>
+                      <th class="text-secondary">LineCode</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for r in merchant_rows %}
+                      <tr>
+                        <td><code>{{ r.api_name or '-' }}</code></td>
+                        <td><code>{{ r.merchant_name or '-' }}</code></td>
+                        <td><code>{{ r.merchant_id if r.merchant_id is not none else r.merchant_raw }}</code></td>
+                        <td class="text-center"><code>{{ r.currency }}</code></td>
+                        <td class="text-end"><code>
+                          {% if r.buffer_value is number %}
+                            {{ "%.3f"|format(r.buffer_value) }}
+                          {% else %}
+                            {{ r.buffer_value }}
+                          {% endif %}
+                        </code></td>
+                        {% set ai = r.hit_stage.active_idx %}
+                        <td class="text-center">
+                          {% if ai is none %}
+                            <span class="badge text-bg-secondary">未知</span>
+                          {% elif ai == 0 %}
+                            <span class="badge text-bg-secondary">未觸發</span>
+                          {% else %}
+                            {% if ai == 1 %}
+                              <span class="badge" style="background:#0d6efd;">第1階</span>
+                            {% elif ai == 2 %}
+                              <span class="badge" style="background:#6f42c1;">第2階</span>
+                            {% else %}
+                              <span class="badge" style="background:#dc3545;">第3階</span>
+                            {% endif %}
+                          {% endif %}
+                        </td>
+                        <td>
+                          <div class="d-flex flex-wrap gap-2">
+                            {% for lv in r.ctrl_levels_norm %}
+                              {% set active = (ai is not none and ai == lv.idx) %}
+                              <div class="border rounded px-2 py-1 small kiosk-ctrl-lv-box {% if active %}is-active{% endif %}">
+                                <div class="fw-semibold">第{{ lv.idx }}階</div>
+                                <div><span class="text-secondary">門檻：</span><code>{{ lv.buffer_gate_value }}</code></div>
+                                <div><span class="text-secondary">砍牌率：</span><code>{{ lv.no_win_gate }}</code></div>
+                              </div>
+                            {% endfor %}
+                            {% if not r.ctrl_levels_norm or r.ctrl_levels_norm|length == 0 %}
+                              <div class="text-secondary small">（無砍牌設定）</div>
+                            {% endif %}
+                          </div>
+                        </td>
+                        <td>
+                          <div><code>{{ r.update_time_text or r.update_time }}</code></div>
+                        </td>
+                        <td class="text-secondary"><code>{{ r.line_code }}</code></td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              <div class="small text-secondary mt-2">
+                階段判定：以帶正負號的 <code>BufferValue</code> 對照 Setting 的 <code>BufferGateValue</code>（門檻由小到大排列；觸發條件為 <code>BufferValue &lt;= -BufferGateValue</code>），取「最高且已觸發」的階段。
+                列表預設只顯示「已觸發第1階以上」商戶；勾選「顯示未砍牌商戶（顯示全部）」才會包含未觸發者。
+              </div>
+            {% else %}
+              <div class="text-secondary small">查無資料或尚未選擇 Theme。</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+

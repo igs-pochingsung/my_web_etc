@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>魚機注單模擬器</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+          integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --success: #16a34a;
+            --error: #dc2626;
+            --bg: #f8fafc;
+            --card: #ffffff;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg); color: #1e293b; padding: 0; line-height: 1.5; }
+        .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+        .card { background: var(--card); border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); padding: 24px; margin-bottom: 20px; }
+        h2 { margin-top: 0; font-size: 1.25rem; border-left: 4px solid var(--primary); padding-left: 10px; }
+        
+        .input-group { margin-bottom: 20px; }
+        label { display: block; font-weight: 600; margin-bottom: 5px; font-size: 0.9rem; }
+        input { width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; box-sizing: border-box; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
+        th { background: #f1f5f9; text-align: left; padding: 12px; border-bottom: 2px solid #e2e8f0; }
+        td { padding: 12px; border-bottom: 1px solid #e2e8f0; }
+        
+        .result-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 20px; }
+        .stat-box { padding: 15px; border-radius: 8px; background: #f1f5f9; border: 1px solid #e2e8f0; }
+        .stat-box.highlight { background: #eff6ff; border-color: var(--primary); }
+        .stat-label { font-size: 0.8rem; color: #64748b; font-weight: 600; }
+        .stat-value { font-size: 1.2rem; font-weight: 700; margin-top: 5px; }
+
+        .algo-card { padding: 15px; border-radius: 8px; margin-top: 10px; }
+        .algo-wrong { border: 1px solid #fecaca; background: #fef2f2; }
+        .algo-correct { border: 1px solid #bbf7d0; background: #f0fdf4; }
+        
+        .text-error { color: var(--error); font-weight: 700; }
+        .text-success { color: var(--success); font-weight: 700; }
+        .badge { font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; vertical-align: middle; margin-left: 5px; }
+        .badge-red { background: var(--error); color: white; }
+        .tabs { display: flex; gap: 10px; margin: 0 0 16px; }
+        .tab-btn { border: 1px solid #cbd5e1; background: #fff; padding: 8px 12px; border-radius: 999px; cursor: pointer; font-weight: 700; color: #334155; }
+        .tab-btn.active { border-color: var(--primary); color: var(--primary); background: #eff6ff; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .preset-row { display: flex; flex-wrap: wrap; gap: 10px; }
+        .preset-btn { border: 1px solid #cbd5e1; background: #fff; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-weight: 700; }
+        .preset-btn.primary { border-color: var(--primary); color: var(--primary); background: #eff6ff; }
+    </style>
+</head>
+<body>
+
+{% include "_topbar.html" with context %}
+
+<div class="container">
+    <div class="tabs">
+        <button class="tab-btn active" id="tabBtnReq" onclick="showTab('req')">需求分(Req)說明</button>
+        <button class="tab-btn" id="tabBtnEvent" onclick="showTab('event')">20260506少扣押注事件說明</button>
+    </div>
+
+    <div class="tab-panel active" id="tabReq">
+        <div class="card">
+            <h2>需求分(Req)說明</h2>
+            <div style="font-size: 0.9rem; color:#334155;">
+                <p style="margin: 0 0 10px;">
+                    需求分（Req）用來描述把多筆押注集合成一筆時的<b>順序性最低資金需求</b>：同一手也必須先扣 Bet 再加 Win，
+                    因此會存在「扣完 Bet（尚未加 Win）」的資產占用峰值。
+                </p>
+                <ul style="margin: 0; padding-left: 18px;">
+                    <li><b>計算方式</b>：依序處理每筆「先扣 Bet、再加 Win」；在每一筆扣完 Bet 的時間點，取最大 \((累計押分 - 累計贏分)\) 作為需求分。</li>
+                    <li><b>用途</b>：用於資產檢查（是否能順序完成整段注單），不是損益扣項欄位。</li>
+                </ul>
+            </div>
+            <div style="margin-top: 14px;">
+                <div class="stat-label" style="margin-bottom: 8px;">快速帶入押注資料</div>
+                <div class="preset-row">
+                    <button class="preset-btn primary" data-preset="normal" onclick="applyPreset('normal')">1. 正常注單（資產100）</button>
+                    <button class="preset-btn" data-preset="nearZero" onclick="applyPreset('nearZero')">2. 資產接近0回血（資產60）</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tab-panel" id="tabEvent">
+        <div class="card">
+            <h2>20260506少扣押注事件說明</h2>
+            <div style="font-size: 0.9rem; color:#334155;">
+                <p style="margin: 0 0 10px;">
+                    本頁用來重現「外部扣錯欄位」造成少扣的情境：正確應為 <b>資產 - 總押注 + 總贏分</b>，
+                    但錯誤做成 <b>資產 - 需求分 + 總贏分</b>，導致扣項變小、資產被高估。
+                </p>
+            </div>
+            <div style="margin-top: 14px;">
+                <div class="stat-label" style="margin-bottom: 8px;">事件押注資料（自動帶入）</div>
+                <div class="preset-row">
+                    <button class="preset-btn primary" data-preset="event20260506" onclick="applyPreset('event20260506')">帶入：20260506少扣事件（資產500）</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 總計與算法（移到押注紀錄前） -->
+    <div class="card">
+        <h2>統計結果與算法對比</h2>
+        <div class="result-grid">
+            <div class="stat-box">
+                <div class="stat-label">總押注 (Total Bet)</div>
+                <div class="stat-value" id="totalBet">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">總贏分 (Total Win)</div>
+                <div class="stat-value" id="totalWin">0</div>
+            </div>
+            <div class="stat-box highlight">
+                <div class="stat-label">淨損益 (Net Win)</div>
+                <div class="stat-value" id="totalNet">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">需求分 (Req)</div>
+                <div class="stat-value" id="totalReq">0</div>
+            </div>
+        </div>
+
+        <div id="algoCorrectPanel" class="algo-card algo-correct">
+            <div class="stat-label">✅ 正確算法（資產 - 總押注 + 總贏分）</div>
+            <div class="stat-value" id="correctAlgo">0</div>
+            <div id="correctFormula" style="font-size: 0.9rem; margin-top: 8px; color:#334155;"></div>
+        </div>
+
+        <div id="wrongAlgoBlock1" class="algo-card algo-wrong">
+            <div class="stat-label">❌ 錯誤算法</div>
+            <div class="stat-value" id="wrongAlgo1">0</div>
+            <div id="wrongFormula1" style="font-size: 0.9rem; margin-top: 8px; color:#334155;"></div>
+        </div>
+
+        <div id="wrongAlgoBlock2" class="algo-card algo-wrong" style="display: none;">
+            <div class="stat-label">❌ 錯誤算法</div>
+            <div class="stat-value" id="wrongAlgo2">0</div>
+            <div id="wrongFormula2" style="font-size: 0.9rem; margin-top: 8px; color:#334155;"></div>
+        </div>
+    </div>
+
+    <!-- 五筆資料輸入（含初始資產，可收合） -->
+    <div class="card">
+        <details>
+            <summary style="cursor:pointer; font-weight:800; color:#334155;">押注紀錄（可手動改值）（點擊展開/收合）</summary>
+            <div style="margin-top: 14px;">
+                <div class="input-group" style="max-width: 240px;">
+                    <label>初始資產 (Initial Balance)</label>
+                    <input type="number" id="initBalance" value="100" oninput="calculate()">
+                </div>
+                <h2 style="margin-top: 0;">五筆押注紀錄</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th width="10%">筆次</th>
+                            <th>押注 (Bet)</th>
+                            <th>贏分 (Win)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inputRows">
+                        <!-- 由 JS 生成 5 橫列 -->
+                    </tbody>
+                </table>
+            </div>
+        </details>
+    </div>
+
+    <!-- 計算結果表格 -->
+    <div class="card">
+        <h2>計算過程 <small style="font-weight: normal; color: #64748b;">(邏輯：餘額 → 扣除 Bet → 加上 Win)</small></h2>
+        <table id="resultTable">
+            <thead>
+                <tr>
+                    <th>筆次</th>
+                    <th>期初餘額</th>
+                    <th>1. 扣除 Bet</th>
+                    <th>2. 加上 Win</th>
+                    <th>3. 淨損益</th>
+                    <th>4. 需求分</th>
+                    <th>最終餘額</th>
+                </tr>
+            </thead>
+            <tbody id="resultBody"></tbody>
+        </table>
+    </div>
+
+    <div id="reqExplainCard" class="card" style="padding: 16px;">
+        <h2 style="margin-bottom: 10px;">Req 用途說明</h2>
+        <div style="font-size: 0.9rem; color:#334155;">
+            <p style="margin: 0 0 10px;">
+                這裡的 <b>Req</b> 不是「達標門檻」，而是為了把多筆押注集合成一筆時，仍能<b>保留順序性</b>並避免用 <b>Total Bet</b> 直接估算導致「資產不足」的<b>順序性需求值</b>。
+            </p>
+            <ul style="margin: 0; padding-left: 18px;">
+                <li><b>核心目的</b>：把多筆合併成一筆時，確保後續的 Bet 會先使用前面已發生的 Win 來抵扣，不會因為把 Bet 全部加總而誤判需要更多資金。</li>
+                <li><b>計算概念</b>：依序處理每筆「先扣 Bet、再加 Win」；在每一筆<b>扣完 Bet（尚未加 Win）</b>的時間點，計算 \((累計押分 - 累計贏分)\) 並取<b>最大值</b>，代表整段流程中「最吃緊」時刻所需準備的最低資金。</li>
+                <li><b>重要提醒</b>：Req 用來描述「順序性資金占用/最低資金需求」，不是損益計算的扣項欄位。</li>
+            </ul>
+        </div>
+    </div>
+
+    <div id="eventExplainCard" class="card" style="padding: 16px;">
+        <h2 style="margin-bottom: 10px;">資產計算錯誤說明</h2>
+        <div style="font-size: 0.9rem; color:#334155;">
+            <p style="margin: 0 0 10px;">
+                資產/損益的核心是「真實流入流出」。在這個表格邏輯中每筆都是：<b>餘額 → 扣 Bet → 加 Win</b>。
+            </p>
+            <ul style="margin: 0; padding-left: 18px;">
+                <li><b>錯誤案例：扣錯欄位</b>：正確應該是每段或每筆都做 <b>-押分(Bet) + 贏分(Win)</b>，但外部卻做成 <b>-Req + 贏分(Win)</b>，會造成<b>少扣</b>（資產被高估）。</li>
+                <li><b>常見錯誤 2：只看 Win 不看 Bet</b>：<b>Total Win</b> 只是回收/獲得的金額，沒有扣掉投注就不是淨利。</li>
+                <li><b>正確對照</b>：若要看整體淨損益，應使用 <b>(Total Win - Total Bet)</b>（對應「贏回 - 投入」）。</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 初始化生成 5 組輸入框
+    const inputRows = document.getElementById('inputRows');
+    const presets = {
+        normal: {
+            initBalance: 100,
+            data: [[20, 0], [20, 0], [20, 100], [20, 0], [20, 0]],
+        },
+        nearZero: {
+            initBalance: 60,
+            data: [[20, 0], [20, 0], [20, 100], [20, 0], [20, 0]],
+        },
+        event20260506: {
+            initBalance: 500,
+            data: [[20, 0], [20, 0], [20, 270], [20, 0], [20, 0]],
+        },
+    };
+
+    const defaultPresetKey = 'normal';
+    const defaultData = presets[defaultPresetKey].data;
+
+    /** @type {'req' | 'event'} */
+    let activeTab = 'req';
+
+    function syncTabPanels() {
+        const b1 = document.getElementById('wrongAlgoBlock1');
+        const b2 = document.getElementById('wrongAlgoBlock2');
+        if (b1) b1.style.display = activeTab === 'req' ? 'block' : 'none';
+        if (b2) b2.style.display = activeTab === 'event' ? 'block' : 'none';
+
+        const reqExplain = document.getElementById('reqExplainCard');
+        const eventExplain = document.getElementById('eventExplainCard');
+        if (reqExplain) reqExplain.style.display = activeTab === 'req' ? 'block' : 'none';
+        if (eventExplain) eventExplain.style.display = activeTab === 'event' ? 'block' : 'none';
+
+        const wrongF1 = document.getElementById('wrongFormula1');
+        const wrongF2 = document.getElementById('wrongFormula2');
+        if (wrongF1) wrongF1.style.display = activeTab === 'req' ? 'block' : 'none';
+        if (wrongF2) wrongF2.style.display = activeTab === 'event' ? 'block' : 'none';
+    }
+
+    for (let i = 0; i < 5; i++) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>#${i + 1}</td>
+            <td><input type="number" class="bet-in" value="${defaultData[i][0]}" oninput="calculate()"></td>
+            <td><input type="number" class="win-in" value="${defaultData[i][1]}" oninput="calculate()"></td>
+        `;
+        inputRows.appendChild(tr);
+    }
+
+    function applyPreset(presetKey) {
+        const preset = presets[presetKey];
+        if (!preset) return;
+
+        // sync preset button highlight
+        document.querySelectorAll('.preset-btn').forEach((btn) => btn.classList.remove('primary'));
+        document.querySelectorAll(`.preset-btn[data-preset="${presetKey}"]`).forEach((btn) => btn.classList.add('primary'));
+
+        document.getElementById('initBalance').value = preset.initBalance;
+        const bets = document.querySelectorAll('.bet-in');
+        const wins = document.querySelectorAll('.win-in');
+        for (let i = 0; i < 5; i++) {
+            const [b, w] = preset.data[i] || [0, 0];
+            if (bets[i]) bets[i].value = b;
+            if (wins[i]) wins[i].value = w;
+        }
+        calculate();
+    }
+
+    function showTab(tabKey) {
+        const reqPanel = document.getElementById('tabReq');
+        const eventPanel = document.getElementById('tabEvent');
+        const btnReq = document.getElementById('tabBtnReq');
+        const btnEvent = document.getElementById('tabBtnEvent');
+
+        const isReq = tabKey === 'req';
+        activeTab = isReq ? 'req' : 'event';
+        reqPanel.classList.toggle('active', isReq);
+        eventPanel.classList.toggle('active', !isReq);
+        btnReq.classList.toggle('active', isReq);
+        btnEvent.classList.toggle('active', !isReq);
+        syncTabPanels();
+
+        if (!isReq) {
+            applyPreset('event20260506');
+        } else {
+            calculate();
+        }
+    }
+
+    function calculate() {
+        const initBalance = parseFloat(document.getElementById('initBalance').value) || 0;
+        let currentBalance = initBalance;
+        const bets = document.querySelectorAll('.bet-in');
+        const wins = document.querySelectorAll('.win-in');
+        const resultBody = document.getElementById('resultBody');
+        
+        resultBody.innerHTML = '';
+        
+        let totalBet = 0;
+        let totalWin = 0;
+        let cumBet = 0;
+        let cumWin = 0;
+        let totalReq = 0; // 順序性最低資金需求（最大累計(押分-贏分)）
+
+        for (let i = 0; i < 5; i++) {
+            let b = parseFloat(bets[i].value) || 0;
+            let w = parseFloat(wins[i].value) || 0;
+            
+            let startBal = currentBalance;
+            let afterBet = startBal - b; // 先扣 Bet
+            let finalBal = afterBet + w; // 再加 Win
+            
+            totalBet += b;
+            totalWin += w;
+
+            // Req：用順序性累計來估算「最吃緊」所需資金
+            // 規則：同一手也必須先扣 Bet，再加 Win；所以 Req 峰值需在「扣完 Bet、尚未加 Win」時計算
+            cumBet += b;
+            totalReq = Math.max(totalReq, cumBet - cumWin);
+            const reqAfterBetPeak = totalReq;
+            cumWin += w;
+
+            const netThisHand = w - b; // -Bet + Win
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>#${i + 1}</td>
+                <td>$${startBal.toLocaleString()}</td>
+                <td class="${afterBet < 0 ? 'text-error' : ''}">
+                    -$${b.toLocaleString()} 
+                    ${afterBet < 0 ? '<span class="badge badge-red">餘額不足</span>' : ''}
+                    <div style="font-size:0.7rem; color:#64748b;">剩餘: $${afterBet.toLocaleString()}</div>
+                </td>
+                <td class="text-success">+$${w.toLocaleString()}</td>
+                <td class="${netThisHand >= 0 ? 'text-success' : 'text-error'}">$${netThisHand.toLocaleString()}</td>
+                <td>$${reqAfterBetPeak.toLocaleString()}</td>
+                <td style="font-weight:700">$${finalBal.toLocaleString()}</td>
+            `;
+            resultBody.appendChild(tr);
+            
+            currentBalance = finalBal; // 滾動到下一筆
+        }
+
+        // 更新總計
+        const netWin = totalWin - totalBet;
+        document.getElementById('totalBet').innerText = `$${totalBet.toLocaleString()}`;
+        document.getElementById('totalReq').innerText = `$${totalReq.toLocaleString()}`;
+        document.getElementById('totalWin').innerText = `$${totalWin.toLocaleString()}`;
+        document.getElementById('totalNet').innerText = `$${netWin.toLocaleString()}`;
+        document.getElementById('totalNet').className = netWin >= 0 ? 'stat-value text-success' : 'stat-value text-error';
+
+        // 更新算法對比
+        const correctFinal = initBalance - totalBet + totalWin;
+        const wrong1Final = initBalance - totalBet + totalWin;
+        const wrong2Final = initBalance - totalReq + totalWin;
+
+        const correctCheckOk = initBalance >= totalReq; // 資產 >= 需求分
+        const wrongCheckOk = initBalance >= totalBet;   // 資產 >= 總押
+        const wrong2CheckOk = initBalance >= totalReq;  // 資產 >= 需求分
+
+        // 正確算法：先檢查，再計算
+        const correctAlgoEl = document.getElementById('correctAlgo');
+        const correctFormulaEl = document.getElementById('correctFormula');
+        if (!correctCheckOk) {
+            correctAlgoEl.className = 'stat-value text-error';
+            correctAlgoEl.innerText = '注單失敗';
+            correctFormulaEl.innerHTML =
+                `<div class="text-error"><b>資產檢查失敗</b>：資產($${initBalance.toLocaleString()}) 需 ≥ 需求分($${totalReq.toLocaleString()})</div>`;
+        } else {
+            correctAlgoEl.className = 'stat-value text-success';
+            correctAlgoEl.innerText = `$${correctFinal.toLocaleString()}`;
+            correctFormulaEl.innerHTML =
+                `<div>資產檢查：資產($${initBalance.toLocaleString()}) ≥ 需求分($${totalReq.toLocaleString()}) ✅</div>` +
+                `<div style="margin-top:6px;">（ 資產 - 總押注 + 總贏分 ）</div>` +
+                `<div>= （ $${initBalance.toLocaleString()} - $${totalBet.toLocaleString()} + $${totalWin.toLocaleString()} ）</div>` +
+                `<div>= <b>$${correctFinal.toLocaleString()}</b></div>`;
+        }
+
+        // 錯誤算法一：檢查用總押、計算仍用(資產-總押+總贏)
+        const wrongAlgo1El = document.getElementById('wrongAlgo1');
+        const wrongFormula1El = document.getElementById('wrongFormula1');
+        if (!wrongCheckOk) {
+            wrongAlgo1El.className = 'stat-value text-error';
+            wrongAlgo1El.innerText = '注單失敗';
+            wrongFormula1El.innerHTML =
+                `<div class="text-error"><b>資產檢查失敗</b>：資產($${initBalance.toLocaleString()}) 需 ≥ 總押注($${totalBet.toLocaleString()})</div>`;
+        } else {
+            wrongAlgo1El.className = 'stat-value';
+            wrongAlgo1El.innerText = `$${wrong1Final.toLocaleString()}`;
+            wrongFormula1El.innerHTML =
+                `<div>資產檢查：資產($${initBalance.toLocaleString()}) ≥ 總押注($${totalBet.toLocaleString()}) ✅</div>` +
+                `<div style="margin-top:6px;">（ 資產 - 總押注 + 總贏分 ）</div>` +
+                `<div>= （ $${initBalance.toLocaleString()} - $${totalBet.toLocaleString()} + $${totalWin.toLocaleString()} ）</div>` +
+                `<div>= <b>$${wrong1Final.toLocaleString()}</b></div>`;
+        }
+
+        // 錯誤算法二：檢查用需求分、計算改成(資產-需求分+總贏)
+        const wrongAlgo2El = document.getElementById('wrongAlgo2');
+        const wrongFormula2El = document.getElementById('wrongFormula2');
+        if (!wrong2CheckOk) {
+            wrongAlgo2El.className = 'stat-value text-error';
+            wrongAlgo2El.innerText = '注單失敗';
+            wrongFormula2El.innerHTML =
+                `<div class="text-error"><b>資產檢查失敗</b>：資產($${initBalance.toLocaleString()}) 需 ≥ 需求分($${totalReq.toLocaleString()})</div>`;
+        } else {
+            wrongAlgo2El.className = 'stat-value';
+            wrongAlgo2El.innerText = `$${wrong2Final.toLocaleString()}`;
+            wrongFormula2El.innerHTML =
+                `<div>資產檢查：資產($${initBalance.toLocaleString()}) ≥ 需求分($${totalReq.toLocaleString()}) ✅</div>` +
+                `<div style="margin-top:6px;">（ 資產 - 需求分 + 總贏分 ）</div>` +
+                `<div>= （ $${initBalance.toLocaleString()} - <span class="text-error">$${totalReq.toLocaleString()}</span> + $${totalWin.toLocaleString()} ）</div>` +
+                `<div>= <b>$${wrong2Final.toLocaleString()}</b></div>`;
+        }
+    }
+
+    // 頁面加載後執行一次
+    syncTabPanels();
+    applyPreset(defaultPresetKey);
+</script>
+
+</body>
+</html>

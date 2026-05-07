@@ -16,24 +16,7 @@
   </style>
 </head>
 <body class="bg-body-tertiary">
-  <nav class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
-    <div class="container">
-      <a class="navbar-brand fw-semibold" href="{{ url_for('play_fish_analyze') }}">Fish 玩家遊玩狀況分析</a>
-      <div class="ms-auto d-flex align-items-center gap-3">
-        <div class="small text-secondary d-flex align-items-center gap-2">
-          <span class="badge text-bg-light border">Plotly</span>
-          <span class="badge text-bg-light border">Mongo</span>
-        </div>
-        <div class="d-flex align-items-center gap-2">
-          <span class="small text-secondary">DB</span>
-          <select class="form-select form-select-sm" name="db_env" id="db_env" aria-label="db env">
-            <option value="macross-test" {% if db_env == 'macross-test' %}selected{% endif %}>macross-test</option>
-            <option value="sssapi-test" {% if db_env == 'sssapi-test' %}selected{% endif %}>sssapi-test</option>
-          </select>
-        </div>
-      </div>
-    </div>
-  </nav>
+  {% include "_topbar.html" with context %}
 
   <main class="container my-4">
     <!-- Loading overlay (shown on submit) -->
@@ -59,11 +42,15 @@
             <ul class="nav nav-tabs mb-3">
               <li class="nav-item">
                 <a class="nav-link {% if active_tab == 'playtime' %}active{% endif %}"
-                   href="{{ url_for('play_fish_analyze') }}?tab=playtime{% if qs %}&{{ qs }}{% endif %}">遊玩時間查詢</a>
+                   href="{{ url_for('play_fish_analyze') }}?tab=playtime{% if qs %}&{{ qs }}{% endif %}">遊玩時間查詢(by玩家)</a>
               </li>
               <li class="nav-item">
-                <a class="nav-link {% if active_tab != 'playtime' %}active{% endif %}"
+                <a class="nav-link {% if active_tab == 'detail' %}active{% endif %}"
                    href="{{ url_for('play_fish_analyze') }}?tab=detail{% if qs %}&{{ qs }}{% endif %}">詳細分析</a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link {% if active_tab == 'stats' %}active{% endif %}"
+                   href="{{ url_for('play_fish_analyze') }}?tab=stats{% if qs %}&{{ qs }}{% endif %}">統計</a>
               </li>
             </ul>
 
@@ -124,6 +111,124 @@
                   <div class="small text-secondary mt-3">請輸入玩家後查詢。</div>
                 {% endif %}
               {% endif %}
+            {% elif active_tab == 'stats' %}
+              <form id="statsForm" method="get" action="{{ url_for('play_fish_analyze') }}" class="row g-3">
+                <input type="hidden" name="tab" value="stats" />
+                <input type="hidden" name="db_env" value="{{ db_env }}" />
+                <input type="hidden" name="stats_run" value="1" />
+                <div class="col-12">
+                  <div class="row g-3 align-items-end">
+                    <div class="col-12 col-md-4">
+                      <label class="form-label">日期（一天）</label>
+                      <input name="date" type="date" class="form-control" value="{{ date }}" />
+                    </div>
+                    <div class="col-6 col-md-4">
+                      <label class="form-label">開始時間（本地）</label>
+                      <input name="start_time" type="time" class="form-control" value="{{ start_time }}" step="60" />
+                    </div>
+                    <div class="col-6 col-md-4">
+                      <label class="form-label">結束時間（本地）</label>
+                      <input name="end_time" type="time" class="form-control" value="{{ end_time }}" step="60" />
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12 col-md-8">
+                  <label class="form-label">遊戲（選填，子字串篩選）</label>
+                  <input name="stats_game" class="form-control" value="{{ stats_game }}" placeholder="例如關鍵字，留空=全部" />
+                </div>
+                <div class="col-12 col-md-4 d-grid align-self-end">
+                  <button type="submit" class="btn btn-primary">查詢統計</button>
+                </div>
+                <div class="col-12">
+                  <div class="small text-secondary">
+                    資料來源：<span class="mono">DetailBetWinFishRaw_YYYYMMDD</span>；遊戲名優先取該筆 log 的 GameName/StageName，否則以 <span class="mono">FishPlayerInOutTime</span> 時間區間對應。
+                    勾選「略」的列不計入下方整體合計；改勾選後請按「套用忽略並重查」。
+                  </div>
+                </div>
+              </form>
+
+              {% if stats_ran and stats_rows|length > 0 %}
+                <form id="statsIgnoreForm" method="get" action="{{ url_for('play_fish_analyze') }}" class="mt-3">
+                  <input type="hidden" name="tab" value="stats" />
+                  <input type="hidden" name="db_env" value="{{ db_env }}" />
+                  <input type="hidden" name="stats_run" value="1" />
+                  <input type="hidden" name="date" value="{{ date }}" />
+                  <input type="hidden" name="start_time" value="{{ start_time }}" />
+                  <input type="hidden" name="end_time" value="{{ end_time }}" />
+                  <input type="hidden" name="stats_game" value="{{ stats_game }}" />
+                  <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle">
+                      <thead class="table-light">
+                        <tr>
+                          <th style="width:2.5rem;" title="不計入整體">略</th>
+                          <th>遊戲</th>
+                          <th>ArkID</th>
+                          <th>UserID</th>
+                          <th>暱稱</th>
+                          <th class="text-end">TotalBet</th>
+                          <th class="text-end">TotalWin</th>
+                          <th class="text-end">淨值</th>
+                          <th class="text-end">BetCount</th>
+                          <th class="text-end">WinCount</th>
+                          <th class="text-end">Hit%</th>
+                          <th class="text-end">RTP%</th>
+                          <th class="text-end">SRTP%</th>
+                          <th class="text-end">Raw筆數</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for r in stats_rows %}
+                          <tr class="{% if r.row_key in stat_ignore_keys %}table-light text-muted{% endif %}">
+                            <td class="text-center">
+                              <input class="form-check-input" type="checkbox" name="stat_ignore" value="{{ r.row_key }}"
+                                     {% if r.row_key in stat_ignore_keys %}checked{% endif %} />
+                            </td>
+                            <td>{{ r.game }}</td>
+                            <td class="mono small">{{ r.ark_id }}</td>
+                            <td class="mono small">{{ r.user_id }}</td>
+                            <td class="small">{{ r.nickname }}</td>
+                            <td class="mono text-end">{{ '%.4f'|format(r.total_bet) }}</td>
+                            <td class="mono text-end">{{ '%.4f'|format(r.total_win) }}</td>
+                            <td class="mono text-end">{{ '%.4f'|format(r.net) }}</td>
+                            <td class="text-end">{{ r.bet_count }}</td>
+                            <td class="text-end">{{ r.win_count }}</td>
+                            <td class="text-end">{% if r.hit_pct is not none %}{{ '%.2f'|format(r.hit_pct) }}{% else %}-{% endif %}</td>
+                            <td class="text-end">{% if r.rtp_pct is not none %}{{ '%.2f'|format(r.rtp_pct) }}{% else %}-{% endif %}</td>
+                            <td class="text-end">{% if r.srtp_pct is not none %}{{ '%.2f'|format(r.srtp_pct) }}{% else %}-{% endif %}</td>
+                            <td class="text-end">{{ r.row_count }}</td>
+                          </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="d-flex flex-wrap gap-2 align-items-center">
+                    <button type="submit" class="btn btn-outline-primary btn-sm">套用忽略並重查</button>
+                    <span class="small text-secondary">SRTP 目前與 RTP 同口徑（ΣWin/ΣBet）；若 log 另有理論值可再擴充。</span>
+                  </div>
+                </form>
+
+                {% if stats_overall %}
+                  <div class="card mt-3 border-primary">
+                    <div class="card-header bg-primary-subtle fw-semibold">整體統計（已排除勾選「忽略」的列，共 {{ stats_overall.included_rows }} 組）</div>
+                    <div class="card-body row g-2 small">
+                      <div class="col-6 col-md-3"><span class="text-secondary">TotalBet</span><div class="mono fw-semibold">{{ '%.4f'|format(stats_overall.total_bet) }}</div></div>
+                      <div class="col-6 col-md-3"><span class="text-secondary">TotalWin</span><div class="mono fw-semibold">{{ '%.4f'|format(stats_overall.total_win) }}</div></div>
+                      <div class="col-6 col-md-3"><span class="text-secondary">淨值</span><div class="mono fw-semibold">{{ '%.4f'|format(stats_overall.net) }}</div></div>
+                      <div class="col-6 col-md-3"><span class="text-secondary">RTP%</span><div class="mono fw-semibold">{% if stats_overall.rtp_pct is not none %}{{ '%.2f'|format(stats_overall.rtp_pct) }}{% else %}-{% endif %}</div></div>
+                      <div class="col-6 col-md-3"><span class="text-secondary">BetCount</span><div class="mono fw-semibold">{{ stats_overall.bet_count }}</div></div>
+                      <div class="col-6 col-md-3"><span class="text-secondary">WinCount</span><div class="mono fw-semibold">{{ stats_overall.win_count }}</div></div>
+                      <div class="col-6 col-md-3"><span class="text-secondary">Hit%</span><div class="mono fw-semibold">{% if stats_overall.hit_pct is not none %}{{ '%.2f'|format(stats_overall.hit_pct) }}{% else %}-{% endif %}</div></div>
+                      <div class="col-6 col-md-3"><span class="text-secondary">SRTP%</span><div class="mono fw-semibold">{% if stats_overall.srtp_pct is not none %}{{ '%.2f'|format(stats_overall.srtp_pct) }}{% else %}-{% endif %}</div></div>
+                      <div class="col-12"><span class="text-secondary">Detail raw 筆數加總</span><div class="mono fw-semibold">{{ stats_overall.row_count }}</div></div>
+                    </div>
+                  </div>
+                {% endif %}
+              {% elif stats_ran %}
+                <div class="small text-secondary mt-3">此時段查無彙總資料。</div>
+              {% else %}
+                <div class="small text-secondary mt-3">請設定日期、時間範圍後按「查詢統計」。</div>
+              {% endif %}
+
             {% else %}
             <form id="queryForm" method="get" action="{{ url_for('play_fish_analyze') }}" class="row g-3 align-items-end">
               <input type="hidden" name="tab" value="detail" />
@@ -233,6 +338,7 @@
             </div>
           {% endif %}
         {% endif %}
+
       </div>
     </div>
   </main>
@@ -261,16 +367,7 @@
       }
       document.addEventListener('DOMContentLoaded', function () {
         hideLoading();
-        var sel = document.getElementById('db_env');
-        if (sel) {
-          sel.addEventListener('change', function () {
-            try {
-              var url = new URL(window.location.href);
-              url.searchParams.set('db_env', sel.value);
-              window.location.href = url.toString();
-            } catch (e) {}
-          });
-        }
+        // db_env / route navigation handled by shared topbar
         var form = document.getElementById('queryForm');
         if (form) {
           form.addEventListener('submit', function () {
@@ -280,6 +377,18 @@
         var inoutForm = document.getElementById('inoutForm');
         if (inoutForm) {
           inoutForm.addEventListener('submit', function () {
+            showLoading();
+          });
+        }
+        var statsForm = document.getElementById('statsForm');
+        if (statsForm) {
+          statsForm.addEventListener('submit', function () {
+            showLoading();
+          });
+        }
+        var statsIgnoreForm = document.getElementById('statsIgnoreForm');
+        if (statsIgnoreForm) {
+          statsIgnoreForm.addEventListener('submit', function () {
             showLoading();
           });
         }

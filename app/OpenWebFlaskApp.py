@@ -1,21 +1,35 @@
+# -*- coding: utf-8 -*-
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 import webbrowser
 from OpenWeb import getIpOption, getIpFromOption, getUrl
 import json
-import redis
 from FishTeeYanAnalyzeWeb import init_play_fish_analyze_routes
+from BufferKioskInfoWeb import init_buffer_kiosk_info_routes
 
 app = Flask(__name__)
 
 # Redis 連線設定
-redis_client = redis.Redis(host='192.168.121.86', port=6379, db=0, decode_responses=True)
+try:
+    import redis  # type: ignore
+except Exception:  # pragma: no cover
+    redis = None  # type: ignore
+    redis_client = None
+else:
+    try:
+        from DBConnect import get_redis_client
+        redis_client = get_redis_client()
+    except Exception:  # pragma: no cover
+        redis_client = None
 
 # Register Fish analyze web routes
 init_play_fish_analyze_routes(app)
+# Register Kiosk Buffer info route (not in topbar list)
+init_buffer_kiosk_info_routes(app)
 
 
 @app.route('/', methods=['GET'])
 def index():
+    db_env = (request.args.get("db_env", "macross-test") or "macross-test").strip()
     client_ips = getIpOption()
     selected_client_ip = "Client - ICE"
     selected_server_ip = "DEV - Cross(macross-dev)"
@@ -63,7 +77,21 @@ def index():
         ordered_games.append({"display": k, "value": "- - - - - -"})
         ordered_games.extend(sorted(tmp.get(k,[]), key=lambda x: x['value']))
     ordered_games = [{"display": "{} - {}".format(game['value'], game['display']), "value": game['value']} for game in ordered_games]
-    return render_template('SifuLink.html', client_ips=client_ips, games=ordered_games, langs=langs, selected_client_ip=selected_client_ip, selected_server_ip=selected_server_ip)
+    return render_template(
+        'SifuLink.html',
+        client_ips=client_ips,
+        games=ordered_games,
+        langs=langs,
+        selected_client_ip=selected_client_ip,
+        selected_server_ip=selected_server_ip,
+        # topbar context
+        brand_title="魚機私服連結轉跳",
+        brand_url=url_for("index"),
+        active_route="index",
+        show_env_select=False,
+        db_env=db_env,
+        db_presets=["macross-test", "sssapi-test"],
+    )
 
 
 @app.route('/generate_url', methods=['POST'])
@@ -115,6 +143,20 @@ def fish_event_setting_tool():
     return render_template("FishEventSetting.html")
 
 
+@app.route('/FishBetWinSimulator', methods=['GET'])
+def fish_bet_win_simulator():
+    return render_template(
+        "FishBetWinSimulator.html",
+        # topbar context
+        brand_title="魚機注單模擬器",
+        brand_url=url_for("index"),
+        active_route="fish_bet_win_simulator",
+        show_env_select=False,
+        db_env=(request.args.get("db_env", "macross-test") or "macross-test").strip(),
+        db_presets=["macross-test", "sssapi-test"],
+    )
+
+
 @app.route('/pocSIFU/setArk', methods=['GET', 'POST'])
 def set_ark():
     """
@@ -127,6 +169,12 @@ def set_ark():
     
     # POST 請求處理
     try:
+        if redis_client is None:
+            return jsonify({
+                'success': False,
+                'message': 'Redis 套件/連線未設定（請先安裝 redis 套件並確認 Redis 服務）。'
+            }), 500
+
         data = request.get_json()
         action = data.get('action')
         ark_id = data.get('arkId')
@@ -138,7 +186,7 @@ def set_ark():
                 'message': 'Ark ID 必須是8位數字'
             }), 400
         
-        redis_key = f"token_{ark_id}"
+        redis_key = "token_{}".format(ark_id)
         
         if action == 'set':
             # 設定 Token
@@ -152,7 +200,7 @@ def set_ark():
             redis_client.set(redis_key, ark_token)
             return jsonify({
                 'success': True,
-                'message': f'成功設定 {redis_key}',
+                'message': '成功設定 {}'.format(redis_key),
                 'key': redis_key,
                 'token': ark_token
             })
@@ -162,7 +210,7 @@ def set_ark():
             token = redis_client.get(redis_key)
             return jsonify({
                 'success': True,
-                'message': f'成功查詢 {redis_key}',
+                'message': '成功查詢 {}'.format(redis_key),
                 'key': redis_key,
                 'token': token
             })
@@ -173,15 +221,16 @@ def set_ark():
                 'message': '不支援的操作'
             }), 400
             
-    except redis.ConnectionError:
-        return jsonify({
-            'success': False,
-            'message': 'Redis 連線失敗，請確認 Redis 服務是否啟動'
-        }), 500
     except Exception as e:
+        # 如果有 redis module，優先辨識 ConnectionError
+        if redis is not None and isinstance(e, getattr(redis, "ConnectionError", Exception)):
+            return jsonify({
+                'success': False,
+                'message': 'Redis 連線失敗，請確認 Redis 服務是否啟動'
+            }), 500
         return jsonify({
             'success': False,
-            'message': f'發生錯誤: {str(e)}'
+            'message': '發生錯誤: {}'.format(str(e))
         }), 500
 
 
