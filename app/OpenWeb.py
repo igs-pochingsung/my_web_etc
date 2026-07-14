@@ -17,6 +17,7 @@ IP_MAP = {
     "PAN": "192.168.121.45",
     "DEV - 50": "192.168.121.50",
     "DEV - 142": "192.168.121.142",
+    "DEV - 176": "192.168.121.176",
     "DEV - Cross(macross-dev)": "35.198.231.50",
 }
 GAME_LIST = ["ZombieAwaken", "MrFortune", "MoneyTree", "LuckyBuddha", "BlizzardDragon", "AladdinAdventure", "Circus", "OceanParadise"]

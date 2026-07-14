@@ -12,6 +12,10 @@
 </head>
 <body>
 {% include "_topbar.html" with context %}
+<div class="agent-skill-banner">
+    <span class="agent-skill-text">🤖 現在支援 Agent Skill 囉</span>
+    <button type="button" class="agent-skill-btn" onclick="showSkillDownload()">馬上下載</button>
+</div>
 <div class="sifulink-container" align="center" style="margin-top: 24px;">
 <!-- <h1>魚機私服連結轉跳</h1> -->
     </br>
@@ -399,12 +403,87 @@
           }
       }
   })()
+
+  function showSkillDownload() {
+    Swal.fire({
+      title: '🤖 Agent Skill 匯入說明',
+      html: `
+        <div style="text-align:left; font-family:monospace; font-size:13px; line-height:2;">
+          <b>下載後，請依以下步驟匯入：</b><br><br>
+          <span style="color:#0f0">①</span> 開啟 <b>Claude Desktop App</b><br>
+          <span style="color:#0f0">②</span> 點擊左下角 <b>⚙️ Settings</b><br>
+          <span style="color:#0f0">③</span> 進入 <b>Capabilities</b> 頁面<br>
+          <span style="color:#0f0">④</span> 找到 <b>Skills</b> 區塊，點擊 <b>「+ Add Skill」</b><br>
+          <span style="color:#0f0">⑤</span> 選擇下載的 <code>sifulink.zip</code> 檔案<br>
+          <span style="color:#0f0">⑥</span> 匯入成功後，即可對 Agent 說：<br>
+          &nbsp;&nbsp;&nbsp;<i style="color:#7fffb0">「幫我開 ICE 的 AladdinMirage，帳號 poc0001」</i>
+          <br>
+          <hr style="border-color:#333; margin:10px 0;">
+          <span style="color:#aaa">💡 也可以直接在 Claude 對話中附上此 zip 檔，<br>
+          &nbsp;&nbsp;&nbsp;跟 AI 說「請幫我匯入這個 skill」即可。</span>
+        </div>
+      `,
+      icon: 'info',
+      confirmButtonText: '✅ 明白了，下載 Skill',
+      confirmButtonColor: '#00c864',
+      showCancelButton: true,
+      cancelButtonText: '取消',
+      background: '#1a1a1a',
+      color: '#fff',
+    }).then(function(result) {
+      if (result.isConfirmed) {
+        window.location.href = '/download/skill';
+      }
+    });
+  }
 </script>
 
 <style>
     * {
         margin: 0;
         padding: 0;
+    }
+
+    .agent-skill-banner {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        background: linear-gradient(90deg, rgba(0,200,100,0.12), rgba(0,160,255,0.12));
+        border-bottom: 1px solid rgba(0,200,100,0.3);
+        padding: 10px 24px;
+        font-family: monospace;
+        font-size: 14px;
+        position: relative;
+        z-index: 10;
+    }
+
+    .agent-skill-text {
+        color: #7fffb0;
+        letter-spacing: 0.04em;
+    }
+
+    .agent-skill-btn {
+        display: inline-block;
+        background: linear-gradient(90deg, #00c864, #00a0ff);
+        color: #000;
+        font-weight: bold;
+        font-family: monospace;
+        font-size: 13px;
+        padding: 5px 16px;
+        border-radius: 20px;
+        text-decoration: none;
+        transition: opacity 0.2s, transform 0.1s;
+    }
+
+    .agent-skill-btn:hover {
+        opacity: 0.85;
+        color: #000;
+        text-decoration: none;
+    }
+
+    .agent-skill-btn:active {
+        transform: scale(0.96);
     }
 
     .sifulink-container {

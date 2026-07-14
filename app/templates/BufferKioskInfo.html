@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Kiosk Buffer 資訊</title>
+  <title>{{ brand_title or 'Kiosk Buffer 資訊' }}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
@@ -29,35 +29,55 @@
               </div>
             </div>
 
-            <form class="mt-3" method="get" action="/KioskBufferInfo">
+            <form class="mt-3" method="get" action="/KioskBufferInfo" id="kioskBufferQueryForm">
               <input type="hidden" name="db_env" value="{{ db_env }}" />
               <div class="row g-2">
                 <div class="col-12 col-md-4">
                   <label class="form-label form-label-sm">Theme（從 KioskBufferSetting 取得）</label>
                   <select class="form-select form-select-sm" name="theme">
-                    <option value="">（請選擇）</option>
+                    <option value="" {% if not selected_theme %}selected{% endif %}>（全部）</option>
                     {% for t in theme_options %}
                       <option value="{{ t }}" {% if selected_theme == t %}selected{% endif %}>{{ t }}</option>
                     {% endfor %}
                   </select>
+                  <label class="form-label form-label-sm mt-2">活躍度（UpdateTime）</label>
+                  <select class="form-select form-select-sm" name="activity" id="activitySelect">
+                    <option value="" {% if not selected_activity %}selected{% endif %}>不限</option>
+                    <option value="1d" {% if selected_activity == '1d' %}selected{% endif %}>一日內</option>
+                    <option value="7d" {% if selected_activity == '7d' %}selected{% endif %}>一周內</option>
+                    <option value="30d" {% if selected_activity == '30d' %}selected{% endif %}>一月內（30 天）</option>
+                  </select>
+                  <div class="form-text small text-secondary mt-1">依 UpdateTime 在前端隱藏過舊列，不會重新查 DB（與下方搜尋欄位相同）。</div>
                 </div>
 
                 <div class="col-12 col-md-4">
-                  <label class="form-label form-label-sm">搜尋（ApiName / 商戶名稱 / 商戶ID / 幣種）</label>
+                  <label class="form-label form-label-sm">搜尋（ApiName / 商戶名稱 / 商戶ID）</label>
                   <div class="row g-2">
                     <div class="col-6">
-                      <input class="form-control form-control-sm" name="api_name" value="{{ q_api_name }}" placeholder="ApiName" />
+                      <input class="form-control form-control-sm" name="api_name" value="{{ q_api_name }}" placeholder="ApiName" list="apiNameList" autocomplete="off" />
+                      <datalist id="apiNameList">
+                        {% if search_options and search_options.api_names %}
+                          {% for v in search_options.api_names %}
+                            <option value="{{ v }}"></option>
+                          {% endfor %}
+                        {% endif %}
+                      </datalist>
                     </div>
                     <div class="col-6">
-                      <input class="form-control form-control-sm" name="merchant_name" value="{{ q_merchant_name }}" placeholder="商戶名稱" />
+                      <input class="form-control form-control-sm" name="merchant_name" value="{{ q_merchant_name }}" placeholder="商戶名稱" list="merchantNameList" autocomplete="off" />
+                      <datalist id="merchantNameList">
+                        {% if search_options and search_options.merchant_names %}
+                          {% for v in search_options.merchant_names %}
+                            <option value="{{ v }}"></option>
+                          {% endfor %}
+                        {% endif %}
+                      </datalist>
                     </div>
-                    <div class="col-6">
-                      <input class="form-control form-control-sm" name="merchant_id" value="{{ q_merchant_id }}" placeholder="商戶ID" />
-                    </div>
-                    <div class="col-6">
-                      <input class="form-control form-control-sm" name="currency" value="{{ q_currency }}" placeholder="幣種" />
+                    <div class="col-12">
+                      <input class="form-control form-control-sm" name="merchant_id" value="{{ q_merchant_id }}" placeholder="商戶ID" autocomplete="off" />
                     </div>
                   </div>
+                  <div class="form-text small text-secondary mt-1">這些欄位會在前端即時過濾列表，不會重新查 DB。</div>
                 </div>
 
                 <div class="col-12 col-md-4 d-flex align-items-end">
@@ -80,15 +100,34 @@
                 </div>
 
                 <div class="col-12 col-md-4 d-flex align-items-end gap-2">
-                  <button type="submit" class="btn btn-sm btn-primary">查詢</button>
+                  <button type="submit" class="btn btn-sm btn-primary">重新載入資料</button>
                   <a class="btn btn-sm btn-outline-secondary"
-                     href="/KioskBufferInfo?theme={{ selected_theme }}&include_disabled={{ '1' if include_disabled else '0' }}&show_all={{ '1' if show_all_merchants else '0' }}&api_name={{ q_api_name }}&merchant_name={{ q_merchant_name }}&merchant_id={{ q_merchant_id }}&currency={{ q_currency }}&refresh=1">
+                     href="/KioskBufferInfo?theme={{ selected_theme }}&activity={{ selected_activity }}&include_disabled={{ '1' if include_disabled else '0' }}&show_all={{ '1' if show_all_merchants else '0' }}&api_name={{ q_api_name }}&merchant_name={{ q_merchant_name }}&merchant_id={{ q_merchant_id }}&refresh=1">
                     強制刷新（略過快取）
                   </a>
                   <a class="btn btn-sm btn-outline-dark" href="/KioskBufferInfo">清空</a>
                 </div>
               </div>
             </form>
+
+            <script>
+              (function () {
+                const form = document.getElementById('kioskBufferQueryForm');
+                if (!form) return;
+
+                form.addEventListener('submit', function (e) {
+                  const showAll = document.getElementById('show_all');
+                  if (showAll && showAll.checked) {
+                    const ok = window.confirm(
+                      '你勾選了「顯示未砍牌商戶（顯示全部）」。\n\n' +
+                      '這可能會造成資料量很大、查詢時間變長、甚至影響正式機流量。\n' +
+                      '確認要繼續查詢嗎？'
+                    );
+                    if (!ok) e.preventDefault();
+                  }
+                });
+              })();
+            </script>
 
             {% if warning %}
               <div class="alert alert-danger mt-3 mb-0">{{ warning }}</div>
@@ -107,88 +146,490 @@
             <div class="small text-secondary">DB: Buffer.KioskBufferValue</div>
           </div>
           <div class="card-body">
-            {% if merchant_rows and merchant_rows|length > 0 %}
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+              <span class="badge text-bg-secondary">已載入：<span id="statLoaded">0</span><span id="statTotalWrap" class="ms-1"></span></span>
+              <span class="badge text-bg-secondary">總數(目前過濾)：<span id="statTotal">-</span></span>
+              <span class="badge" style="background:#0d6efd;">第1階：<span id="statS1">-</span></span>
+              <span class="badge" style="background:#6f42c1;">第2階：<span id="statS2">-</span></span>
+              <span class="badge" style="background:#dc3545;">第3階：<span id="statS3">-</span></span>
+              <span class="badge text-bg-secondary">未觸發：<span id="statS0">-</span></span>
+              <span class="badge text-bg-secondary">未知：<span id="statSU">-</span></span>
+            </div>
               <div class="table-responsive">
                 <table class="table table-sm table-striped align-middle">
                   <thead>
                     <tr class="text-secondary">
-                      <th>ApiName</th>
+                      <th style="width: 36px;"></th>
+                      <th>Theme</th>
                       <th>商戶名稱<br><span class="fw-normal">merchant_name</span></th>
-                      <th>商戶ID<br><span class="fw-normal">merchant_id</span></th>
-                      <th class="text-center">幣種<br><span class="fw-normal">Currency</span></th>
+                      <th class="text-end">Buffer值金額(台幣)</th>
                       <th class="text-end">Buffer值<br><span class="fw-normal">BufferValue</span></th>
                       <th class="text-center" style="min-width: 140px;">砍牌階段</th>
-                      <th style="min-width: 420px;">砍牌設定</th>
                       <th>UpdateTime</th>
-                      <th class="text-secondary">LineCode</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {% for r in merchant_rows %}
-                      <tr>
-                        <td><code>{{ r.api_name or '-' }}</code></td>
-                        <td><code>{{ r.merchant_name or '-' }}</code></td>
-                        <td><code>{{ r.merchant_id if r.merchant_id is not none else r.merchant_raw }}</code></td>
-                        <td class="text-center"><code>{{ r.currency }}</code></td>
-                        <td class="text-end"><code>
-                          {% if r.buffer_value is number %}
-                            {{ "%.3f"|format(r.buffer_value) }}
-                          {% else %}
-                            {{ r.buffer_value }}
-                          {% endif %}
-                        </code></td>
-                        {% set ai = r.hit_stage.active_idx %}
-                        <td class="text-center">
-                          {% if ai is none %}
-                            <span class="badge text-bg-secondary">未知</span>
-                          {% elif ai == 0 %}
-                            <span class="badge text-bg-secondary">未觸發</span>
-                          {% else %}
-                            {% if ai == 1 %}
-                              <span class="badge" style="background:#0d6efd;">第1階</span>
-                            {% elif ai == 2 %}
-                              <span class="badge" style="background:#6f42c1;">第2階</span>
-                            {% else %}
-                              <span class="badge" style="background:#dc3545;">第3階</span>
-                            {% endif %}
-                          {% endif %}
-                        </td>
-                        <td>
-                          <div class="d-flex flex-wrap gap-2">
-                            {% for lv in r.ctrl_levels_norm %}
-                              {% set active = (ai is not none and ai == lv.idx) %}
-                              <div class="border rounded px-2 py-1 small kiosk-ctrl-lv-box {% if active %}is-active{% endif %}">
-                                <div class="fw-semibold">第{{ lv.idx }}階</div>
-                                <div><span class="text-secondary">門檻：</span><code>{{ lv.buffer_gate_value }}</code></div>
-                                <div><span class="text-secondary">砍牌率：</span><code>{{ lv.no_win_gate }}</code></div>
-                              </div>
-                            {% endfor %}
-                            {% if not r.ctrl_levels_norm or r.ctrl_levels_norm|length == 0 %}
-                              <div class="text-secondary small">（無砍牌設定）</div>
-                            {% endif %}
-                          </div>
-                        </td>
-                        <td>
-                          <div><code>{{ r.update_time_text or r.update_time }}</code></div>
-                        </td>
-                        <td class="text-secondary"><code>{{ r.line_code }}</code></td>
-                      </tr>
-                    {% endfor %}
-                  </tbody>
+                  <tbody id="merchantRowsTbody"></tbody>
                 </table>
               </div>
               <div class="small text-secondary mt-2">
                 階段判定：以帶正負號的 <code>BufferValue</code> 對照 Setting 的 <code>BufferGateValue</code>（門檻由小到大排列；觸發條件為 <code>BufferValue &lt;= -BufferGateValue</code>），取「最高且已觸發」的階段。
                 列表預設只顯示「已觸發第1階以上」商戶；勾選「顯示未砍牌商戶（顯示全部）」才會包含未觸發者。
+                CreditType 來自 DimMerchantInfo，對照 DimCurrencyInfoRelation.ZoomCurrency；顯示幣種為 DimCurrencyInfoRelation.Currency（無對應則用 CreditType）。Buffer值金額(幣種) = BufferValue × Ratio × ZoomRatio（無對應則 ZoomRatio 視為 1）；Buffer值金額(台幣) 再乘 DimExchangeRateReport 最新匯率（FromCurrency=DimCurrencyInfoRelation.Currency、ToCurrency=TWD、SourceType=accounting；無法取得時顯示「-」）。
+                「下載報表（CSV）」匯出目前畫面過濾後的列（含幣種、Ratio、實際匯率、匯率更新時間、Buffer值金額）；含第1～3階砍牌門檻。
               </div>
-            {% else %}
-              <div class="text-secondary small">查無資料或尚未選擇 Theme。</div>
-            {% endif %}
+              <div class="d-flex gap-2 mt-3 flex-wrap align-items-center">
+                <button type="button" class="btn btn-sm btn-outline-primary" id="btnLoadMore">載入更多</button>
+                <button type="button" class="btn btn-sm btn-outline-success" id="btnDownloadCsv">下載報表（CSV）</button>
+                <span class="small text-secondary align-self-center" id="loadStatus"></span>
+              </div>
           </div>
         </div>
       </div>
     </div>
   </div>
+
+  <script type="application/json" id="merchantRowsJson"
+          data-initial-show-all="{{ '1' if show_all_merchants else '0' }}"
+          data-db-env="{{ db_env }}"
+          data-include-disabled="{{ '1' if include_disabled else '0' }}">{{ [] | tojson }}</script>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+          crossorigin="anonymous"></script>
+
+  <script>
+    (function () {
+      const dataEl = document.getElementById('merchantRowsJson');
+      const allRows = [];
+      const initialShowAll = (dataEl?.dataset?.initialShowAll === '1');
+      const dbEnv = dataEl?.dataset?.dbEnv || '';
+      const includeDisabled = (dataEl?.dataset?.includeDisabled === '1');
+
+      const form = document.getElementById('kioskBufferQueryForm');
+      const tbody = document.getElementById('merchantRowsTbody');
+      if (!form || !tbody) return;
+
+      const btnLoadMore = document.getElementById('btnLoadMore');
+      const btnDownloadCsv = document.getElementById('btnDownloadCsv');
+      const loadStatus = document.getElementById('loadStatus');
+      const statLoaded = document.getElementById('statLoaded');
+      const statTotalWrap = document.getElementById('statTotalWrap');
+
+      let page = 1;
+      const pageSize = 200;
+      let total = null;
+      let hasMore = true;
+      let loading = false;
+      let filteredRows = [];
+
+      function esc(s) {
+        return (s ?? '').toString()
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+      function numFmt(v) {
+        if (v === null || v === undefined || v === '') return '';
+        const n = Number(v);
+        if (Number.isFinite(n)) return n.toFixed(3);
+        return String(v);
+      }
+
+      function hitStageLabel(ai) {
+        if (ai === null || ai === undefined) return '未知';
+        if (Number(ai) === 0) return '未觸發';
+        if (Number(ai) === 1) return '第1階';
+        if (Number(ai) === 2) return '第2階';
+        if (Number(ai) >= 3) return '第3階';
+        return '未知';
+      }
+
+      function hitBadge(ai) {
+        if (ai === null || ai === undefined) return '<span class="badge text-bg-secondary">未知</span>';
+        if (ai === 0) return '<span class="badge text-bg-secondary">未觸發</span>';
+        if (ai === 1) return '<span class="badge" style="background:#0d6efd;">第1階</span>';
+        if (ai === 2) return '<span class="badge" style="background:#6f42c1;">第2階</span>';
+        return '<span class="badge" style="background:#dc3545;">第3階</span>';
+      }
+
+      function render(rows) {
+        const html = rows.map((r, idx) => {
+          const ai = r?.hit_stage?.active_idx;
+          const collapseId = 'kioskRowDetail_' + idx;
+          const lvBoxes = (Array.isArray(r?.ctrl_levels_norm) ? r.ctrl_levels_norm : []).map(lv => {
+            const active = (ai !== null && ai !== undefined && ai === lv.idx);
+            const cls = active ? 'kiosk-ctrl-lv-box is-active' : 'kiosk-ctrl-lv-box';
+            return (
+              '<div class="border rounded px-2 py-1 small ' + cls + '">' +
+                '<div class="fw-semibold">第' + esc(lv.idx) + '階</div>' +
+                '<div><span class="text-secondary">門檻：</span><code>' + esc(lv.buffer_gate_value) + '</code></div>' +
+                '<div><span class="text-secondary">砍牌率：</span><code>' + esc(lv.no_win_gate) + '</code></div>' +
+              '</div>'
+            );
+          }).join('');
+
+          const lvHtml = lvBoxes || '<div class="text-secondary small">（無砍牌設定）</div>';
+
+          const merchantId = (r.merchant_id !== null && r.merchant_id !== undefined) ? r.merchant_id : (r.merchant_raw ?? '');
+
+          return (
+            '<tr style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#' + collapseId + '" aria-expanded="false" aria-controls="' + collapseId + '">' +
+              '<td class="text-secondary">' +
+                '<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1" data-bs-toggle="collapse" data-bs-target="#' + collapseId + '" aria-controls="' + collapseId + '">+</button>' +
+              '</td>' +
+              '<td><code>' + esc(r.theme || '-') + '</code></td>' +
+              '<td><code>' + esc(r.merchant_name || '-') + '</code></td>' +
+              '<td class="text-end"><code>' + esc(r.buffer_amount_twd_text || r.twd_equivalent_text || '-') + '</code></td>' +
+              '<td class="text-end"><code>' + esc(numFmt(r.buffer_value)) + '</code></td>' +
+              '<td class="text-center">' + hitBadge(ai) + '</td>' +
+              '<td><div><code>' + esc(r.update_time_text || r.update_time || '') + '</code></div></td>' +
+            '</tr>' +
+            '<tr class="collapse" id="' + collapseId + '">' +
+              '<td></td>' +
+              '<td colspan="6">' +
+                '<div class="border rounded bg-white p-2">' +
+                  '<div class="row g-2">' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">ApiName</div>' +
+                      '<div><code>' + esc(r.api_name || '-') + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">merchant_id</div>' +
+                      '<div><code>' + esc(merchantId) + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">LineCode</div>' +
+                      '<div><code>' + esc(r.line_code || '-') + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">CreditType</div>' +
+                      '<div><code>' + esc(r.credit_type || '-') + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">幣種</div>' +
+                      '<div><code>' + esc(r.currency || r.credit_type || '-') + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">ZoomRatio</div>' +
+                      '<div><code>' + esc(r.zoom_ratio !== null && r.zoom_ratio !== undefined ? numFmt(r.zoom_ratio) : '-') + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">Ratio</div>' +
+                      '<div><code>' + esc(r.merchant_ratio !== null && r.merchant_ratio !== undefined ? r.merchant_ratio : '-') + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">實際匯率</div>' +
+                      '<div><code>' + esc(r.exchange_rate !== null && r.exchange_rate !== undefined ? numFmt(r.exchange_rate) : '-') + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">匯率更新時間</div>' +
+                      '<div><code>' + esc(r.exchange_rate_period_text || '-') + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">Buffer值金額(幣種)</div>' +
+                      '<div><code>' + esc(r.buffer_amount_ccy_text || '-') + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12 col-md-4">' +
+                      '<div class="small text-secondary">Buffer值金額(台幣)</div>' +
+                      '<div><code>' + esc(r.buffer_amount_twd_text || r.twd_equivalent_text || '-') + '</code></div>' +
+                    '</div>' +
+                    '<div class="col-12">' +
+                      '<div class="small text-secondary">砍牌設定</div>' +
+                      '<div class="d-flex flex-wrap gap-2">' + lvHtml + '</div>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
+              '</td>' +
+            '</tr>'
+          );
+        }).join('');
+        tbody.innerHTML = html;
+      }
+
+      function contains(hay, needle) {
+        if (!needle) return true;
+        const s = (hay ?? '').toString().toLowerCase();
+        return s.includes(needle.toLowerCase());
+      }
+
+      /** 與後端 _format_update_time 對齊：回傳 UTC epoch 秒，無法解析則 null */
+      function updateTimeToSec(ts) {
+        if (ts === null || ts === undefined) return null;
+        const n = Number(ts);
+        if (!Number.isFinite(n)) return null;
+        if (n > 1e15) return n / 1e6;
+        if (n > 1e12) return n / 1000;
+        if (n > 1e11) return n / 1000;
+        return n;
+      }
+
+      function getFilteredRows() {
+        const fd = new FormData(form);
+        const theme = (fd.get('theme') ?? '').toString().trim();
+        const activity = (fd.get('activity') ?? '').toString().trim();
+        const apiName = (fd.get('api_name') ?? '').toString().trim();
+        const merchantName = (fd.get('merchant_name') ?? '').toString().trim();
+        const merchantId = (fd.get('merchant_id') ?? '').toString().trim();
+        let rows = allRows;
+
+        if (theme) {
+          rows = rows.filter(r => (r?.theme ?? '') === theme);
+        }
+
+        const showAll = (document.getElementById('show_all')?.checked ?? initialShowAll);
+        if (!showAll) {
+          rows = rows.filter(r => {
+            const ai = r?.hit_stage?.active_idx;
+            return (ai !== null && ai !== undefined && Number(ai) >= 1);
+          });
+        }
+
+        const maxAgeSec = activity === '1d' ? 86400 : activity === '7d' ? 86400 * 7 : activity === '30d' ? 86400 * 30 : 0;
+        if (maxAgeSec > 0) {
+          const nowSec = Date.now() / 1000;
+          rows = rows.filter(r => {
+            const uts = updateTimeToSec(r?.update_time);
+            if (uts === null) return false;
+            if (uts > nowSec + 120) return false;
+            return (nowSec - uts) <= maxAgeSec;
+          });
+        }
+
+        if (apiName) rows = rows.filter(r => contains(r?.api_name, apiName));
+        if (merchantName) rows = rows.filter(r => contains(r?.merchant_name, merchantName));
+        if (merchantId) {
+          const midNeedle = merchantId;
+          rows = rows.filter(r => {
+            const rid = r?.merchant_id;
+            if (rid !== null && rid !== undefined && String(rid) === midNeedle) return true;
+            return contains(r?.merchant_raw, midNeedle) || contains(r?.merchant_id, midNeedle);
+          });
+        }
+
+        return rows;
+      }
+
+      function csvCell(v) {
+        const s = (v === null || v === undefined) ? '' : String(v);
+        if (/[",\r\n]/.test(s)) {
+          return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+      }
+
+      function fmtNumOrDash(v) {
+        if (v === null || v === undefined || v === '') return '-';
+        return numFmt(v);
+      }
+
+      function ctrlGateValue(r, idx) {
+        const levels = Array.isArray(r?.ctrl_levels_norm) ? r.ctrl_levels_norm : [];
+        const lv = levels.find(x => Number(x?.idx) === idx);
+        if (!lv || lv.buffer_gate_value === null || lv.buffer_gate_value === undefined) return '';
+        return String(lv.buffer_gate_value);
+      }
+
+      function downloadFilteredCsv() {
+        const rows = filteredRows;
+        if (!rows.length) {
+          window.alert('目前沒有可下載的資料（請確認已載入且過濾後仍有列）。');
+          return;
+        }
+
+        const headers = [
+          'Theme',
+          'ApiName',
+          'merchant_name',
+          'merchant_id',
+          'LineCode',
+          'CreditType',
+          '幣種',
+          'ZoomRatio',
+          'Ratio',
+          '實際匯率',
+          '匯率更新時間',
+          'Buffer值金額(幣種)',
+          'Buffer值金額(台幣)',
+          'BufferValue',
+          '砍牌階段',
+          '第1階門檻',
+          '第2階門檻',
+          '第3階門檻',
+          'UpdateTime',
+        ];
+
+        const lines = [headers.map(csvCell).join(',')];
+        for (const r of rows) {
+          const merchantId = (r.merchant_id !== null && r.merchant_id !== undefined)
+            ? r.merchant_id
+            : (r.merchant_raw ?? '');
+          lines.push([
+            r.theme || '',
+            r.api_name || '',
+            r.merchant_name || '',
+            merchantId,
+            r.line_code || '',
+            r.credit_type || '',
+            r.currency || r.credit_type || '',
+            fmtNumOrDash(r.zoom_ratio),
+            fmtNumOrDash(r.merchant_ratio),
+            fmtNumOrDash(r.exchange_rate),
+            r.exchange_rate_period_text || '-',
+            r.buffer_amount_ccy_text || '-',
+            r.buffer_amount_twd_text || r.twd_equivalent_text || '-',
+            numFmt(r.buffer_value),
+            hitStageLabel(r?.hit_stage?.active_idx),
+            ctrlGateValue(r, 1),
+            ctrlGateValue(r, 2),
+            ctrlGateValue(r, 3),
+            r.update_time_text || r.update_time || '',
+          ].map(csvCell).join(','));
+        }
+
+        const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const ts = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const fname = 'KioskBuffer_'
+          + ts.getFullYear()
+          + pad(ts.getMonth() + 1)
+          + pad(ts.getDate())
+          + '_'
+          + pad(ts.getHours())
+          + pad(ts.getMinutes())
+          + pad(ts.getSeconds())
+          + (dbEnv ? '_' + dbEnv : '')
+          + '.csv';
+        a.href = url;
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }
+
+      function applyFilters() {
+        filteredRows = getFilteredRows();
+        const rows = filteredRows;
+        const elTotal = document.getElementById('statTotal');
+        const elS1 = document.getElementById('statS1');
+        const elS2 = document.getElementById('statS2');
+        const elS3 = document.getElementById('statS3');
+        const elS0 = document.getElementById('statS0');
+        const elSU = document.getElementById('statSU');
+        if (elTotal && elS1 && elS2 && elS3 && elS0 && elSU) {
+          let s1 = 0, s2 = 0, s3 = 0, s0 = 0, su = 0;
+          for (const r of rows) {
+            const ai = r?.hit_stage?.active_idx;
+            if (ai === null || ai === undefined) { su++; continue; }
+            const n = Number(ai);
+            if (n === 1) s1++;
+            else if (n === 2) s2++;
+            else if (n >= 3) s3++;
+            else if (n === 0) s0++;
+            else su++;
+          }
+          elTotal.textContent = String(rows.length);
+          elS1.textContent = String(s1);
+          elS2.textContent = String(s2);
+          elS3.textContent = String(s3);
+          elS0.textContent = String(s0);
+          elSU.textContent = String(su);
+        }
+
+        render(rows);
+      }
+
+      async function fetchNextPage() {
+        if (loading || !hasMore) return;
+        loading = true;
+        if (loadStatus) loadStatus.textContent = '載入中...';
+        if (btnLoadMore) btnLoadMore.disabled = true;
+
+        const fd = new FormData(form);
+        const theme = (fd.get('theme') ?? '').toString().trim();
+        const url = new URL('/KioskBufferInfo/data', window.location.origin);
+        if (dbEnv) url.searchParams.set('db_env', dbEnv);
+        url.searchParams.set('include_disabled', includeDisabled ? '1' : '0');
+        url.searchParams.set('theme', theme);
+        url.searchParams.set('page', String(page));
+        url.searchParams.set('page_size', String(pageSize));
+        // connect_prod 警告頁放行 token（避免 API 被導去 HTML）
+        try {
+          const sp = new URL(window.location.href);
+          const t = sp.searchParams.get('__prod_ack');
+          if (t) url.searchParams.set('__prod_ack', t);
+        } catch (e) {}
+
+        try {
+          const resp = await fetch(url.toString(), { method: 'GET' });
+          const js = await resp.json();
+          if (!js || js.ok !== true) {
+            throw new Error(js?.error || '載入失敗');
+          }
+          total = js.total;
+          hasMore = js.has_more;
+          const items = Array.isArray(js.items) ? js.items : [];
+          allRows.push(...items);
+          page += 1;
+
+          if (statLoaded) statLoaded.textContent = String(allRows.length);
+          if (statTotalWrap && total !== null) statTotalWrap.textContent = '/ ' + String(total);
+          if (btnLoadMore) btnLoadMore.disabled = !hasMore;
+          if (loadStatus) loadStatus.textContent = hasMore ? '' : '已載入完畢';
+
+          applyFilters();
+        } catch (e) {
+          if (loadStatus) loadStatus.textContent = String(e?.message || e);
+          if (btnLoadMore) btnLoadMore.disabled = false;
+        } finally {
+          loading = false;
+        }
+      }
+
+      // initial load
+      fetchNextPage();
+
+      ['api_name', 'merchant_name', 'merchant_id'].forEach(n => {
+        const el = form.querySelector('[name="' + n + '"]');
+        if (!el) return;
+        el.addEventListener('input', applyFilters);
+        el.addEventListener('change', applyFilters);
+      });
+
+      function resetPagedDataAndRefetch() {
+        allRows.length = 0;
+        page = 1;
+        total = null;
+        hasMore = true;
+        if (statLoaded) statLoaded.textContent = '0';
+        if (statTotalWrap) statTotalWrap.textContent = '';
+        if (loadStatus) loadStatus.textContent = '';
+        if (btnLoadMore) btnLoadMore.disabled = false;
+        fetchNextPage();
+      }
+
+      const themeEl = form.querySelector('[name="theme"]');
+      if (themeEl) {
+        themeEl.addEventListener('change', resetPagedDataAndRefetch);
+      }
+
+      const activityEl = document.getElementById('activitySelect');
+      if (activityEl) {
+        activityEl.addEventListener('change', applyFilters);
+      }
+
+      const showAllEl = document.getElementById('show_all');
+      if (showAllEl) showAllEl.addEventListener('change', applyFilters);
+
+      if (btnLoadMore) btnLoadMore.addEventListener('click', fetchNextPage);
+      if (btnDownloadCsv) btnDownloadCsv.addEventListener('click', downloadFilteredCsv);
+    })();
+  </script>
 </body>
 </html>
 

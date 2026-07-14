@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Experience Meeting Analyze</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Arial, "Microsoft JhengHei", sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .plotly-graph-div { width: 100% !important; }
+    #loadingOverlay { z-index: 2000; }
+    .table thead th { position: sticky; top: 0; background: #f8fafc; z-index: 5; }
+  </style>
+</head>
+<body class="bg-body-tertiary">
+  {% include "_topbar.html" with context %}
+
+  <main class="container my-4">
+    <div id="loadingOverlay" class="position-fixed top-0 start-0 w-100 h-100 d-none">
+      <div class="position-absolute top-0 start-0 w-100 h-100 bg-dark opacity-50"></div>
+      <div class="position-absolute top-50 start-50 translate-middle">
+        <div class="card shadow-lg">
+          <div class="card-body d-flex align-items-center gap-3">
+            <div class="spinner-border text-primary" role="status" aria-label="loading"></div>
+            <div>
+              <div class="fw-semibold">資料載入中…</div>
+              <div class="small text-secondary">正在查詢 DB 並整理資料。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <form id="queryForm" method="get" action="{{ url_for('experience_meeting_analyze') }}" class="row g-3 align-items-end">
+              <input type="hidden" name="db_env" value="{{ db_env }}" />
+              <input type="hidden" name="log_col" value="{{ log_col }}" />
+
+              <div class="col-12 col-lg-5">
+                <label class="form-label">Pin 清單（可留空=全部）</label>
+                <input name="pins" class="form-control mono" value="{{ pins }}" placeholder="例如：4853759, 3254954 或 1000-1010" />
+              </div>
+              <div class="col-12 col-lg-3">
+                <label class="form-label">遊戲（Theme contains）</label>
+                <input name="game" class="form-control" value="{{ theme_title }}" />
+              </div>
+              <div class="col-6 col-lg-2">
+                <label class="form-label">開始（日時分）</label>
+                <input name="start_dt" type="datetime-local" class="form-control" value="{{ start_dt }}" />
+              </div>
+              <div class="col-6 col-lg-2">
+                <label class="form-label">結束（日時分）</label>
+                <input name="end_dt" type="datetime-local" class="form-control" value="{{ end_dt }}" />
+              </div>
+
+              <div class="col-12 col-lg-3">
+                <label class="form-label">圖表指標</label>
+                <select class="form-select" name="metric">
+                  {% for o in metric_options %}
+                    <option value="{{ o.value }}" {% if metric == o.value %}selected{% endif %}>{{ o.label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12 col-lg-2 d-grid">
+                <button type="submit" class="btn btn-primary">分析</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        {% if warning %}
+          <div class="alert alert-warning shadow-sm" role="alert">{{ warning }}</div>
+        {% endif %}
+        {% if meta %}
+          <div class="card shadow-sm">
+            <div class="card-body">
+              <div class="text-secondary small">查詢資訊</div>
+              <div class="mono small">{{ meta }}</div>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-body d-flex flex-wrap gap-2 align-items-center justify-content-between">
+            <div>
+              <div class="fw-semibold">結果表格</div>
+              <div class="small text-secondary">可直接複製（TSV）貼到 Excel/Google Sheets，或一鍵匯出 Excel。</div>
+            </div>
+            <div class="d-flex gap-2">
+              {% if export_url %}
+                <a class="btn btn-outline-secondary btn-sm" href="{{ export_url }}">匯出 Excel</a>
+              {% else %}
+                <button type="button" class="btn btn-outline-secondary btn-sm" disabled>匯出 Excel</button>
+              {% endif %}
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="copyTableBtn">複製表格</button>
+              <span class="small text-secondary" id="copyHint"></span>
+            </div>
+          </div>
+          <div class="table-responsive" style="max-height: 520px;">
+            <table class="table table-sm table-hover align-middle mb-0" id="resultTable">
+              <thead>
+                <tr>
+                  {% for c in table_cols %}
+                    <th class="mono small">{{ c }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in table_rows %}
+                  <tr>
+                    {% for c in table_cols %}
+                      <td class="small {% if c in ['KioskID','PIN'] %}mono{% endif %}">{{ r.get(c, '') }}</td>
+                    {% endfor %}
+                  </tr>
+                {% endfor %}
+                {% if not table_rows %}
+                  <tr><td colspan="{{ table_cols|length }}" class="text-secondary small">沒有資料（請先按「分析」）。</td></tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-body d-flex flex-wrap gap-2 align-items-center justify-content-between">
+            <div>
+              <div class="fw-semibold">圖表</div>
+              <div class="small text-secondary">可下載成 PNG 圖檔。</div>
+            </div>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="downloadChartBtn" {% if not fig_html %}disabled{% endif %}>下載圖檔（PNG）</button>
+            </div>
+          </div>
+          <div class="card-body bg-white">
+            {% if fig_html %}
+              {{ fig_html|safe }}
+            {% else %}
+              <div class="text-secondary small">沒有圖表（請先按「分析」，且選擇的指標需為數值欄位）。</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+          crossorigin="anonymous"></script>
+  <script>
+    (function () {
+      function showLoading() {
+        var overlay = document.getElementById('loadingOverlay');
+        if (!overlay) return;
+        overlay.classList.remove('d-none');
+      }
+      function hideLoading() {
+        var overlay = document.getElementById('loadingOverlay');
+        if (!overlay) return;
+        overlay.classList.add('d-none');
+      }
+      function tableToTSV(table) {
+        var rows = Array.from(table.querySelectorAll('tr'));
+        return rows.map(function (tr) {
+          var cells = Array.from(tr.querySelectorAll('th,td'));
+          return cells.map(function (td) {
+            var t = (td.innerText || '').replace(/\\r?\\n/g, ' ').trim();
+            // TSV escaping: replace tabs
+            return t.replace(/\\t/g, ' ');
+          }).join('\\t');
+        }).join('\\n');
+      }
+      async function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          return;
+        }
+        // fallback
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+
+      document.addEventListener('DOMContentLoaded', function () {
+        hideLoading();
+        // db_env / route navigation handled by shared topbar
+        var form = document.getElementById('queryForm');
+        if (form) {
+          form.addEventListener('submit', function () {
+            showLoading();
+          });
+        }
+
+        var copyBtn = document.getElementById('copyTableBtn');
+        var hint = document.getElementById('copyHint');
+        if (copyBtn) {
+          copyBtn.addEventListener('click', async function () {
+            try {
+              var table = document.getElementById('resultTable');
+              if (!table) return;
+              var tsv = tableToTSV(table);
+              await copyText(tsv);
+              if (hint) hint.innerText = '已複製';
+              window.setTimeout(function () { if (hint) hint.innerText = ''; }, 1500);
+            } catch (e) {
+              if (hint) hint.innerText = '複製失敗';
+              window.setTimeout(function () { if (hint) hint.innerText = ''; }, 2000);
+            }
+          });
+        }
+
+        var dlBtn = document.getElementById('downloadChartBtn');
+        if (dlBtn) {
+          dlBtn.addEventListener('click', async function () {
+            try {
+              var gd = document.querySelector('.js-plotly-plot');
+              if (!gd || !window.Plotly) return;
+              var name = ('experience_meeting_' + (new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')) + '.png');
+              await window.Plotly.downloadImage(gd, {format: 'png', filename: name, height: 720, width: 1280, scale: 2});
+            } catch (e) {}
+          });
+        }
+      });
+      window.addEventListener('pageshow', hideLoading);
+    })();
+  </script>
+</body>
+</html>
+

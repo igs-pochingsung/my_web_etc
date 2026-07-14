@@ -37,7 +37,45 @@
         </button>
         <ul class="dropdown-menu dropdown-menu-end shadow-sm topbar-menu" id="topbarMenu" role="menu">
           <li>
-            <a class="dropdown-item {% if active_route == 'index' %}active{% endif %}" href="{{ url_for('index') }}">
+            <a class="dropdown-item {% if active_route == 'kiosk_buffer_info' %}active{% endif %}"
+               href="{{ url_for('kiosk_buffer_info', db_env=(db_env or 'macross-test')) }}">
+              Kiosk Buffer 資訊
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item {% if active_route == 'kiosk_buffer_info_macross_prod' %}active{% endif %}"
+               href="{{ url_for('kiosk_buffer_info_macross_prod') }}">
+              [Macross正式環境]Kiosk Buffer 資訊
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item {% if active_route == 'kiosk_buffer_info_sssapi_prod' %}active{% endif %}"
+               href="{{ url_for('kiosk_buffer_info_sssapi_prod') }}">
+              [Sssapi正式環境]Kiosk Buffer 資訊
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item {% if active_route == 'event_fish_schedule' %}active{% endif %}"
+               href="{{ url_for('event_fish_schedule', db_env=(db_env or 'macross-test')) }}">
+              EventFishSchedule
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item {% if active_route == 'event_fish_schedule_macross_prod' %}active{% endif %}"
+               href="{{ url_for('event_fish_schedule_macross_prod') }}">
+              [Macross正式環境]EventFishSchedule
+            </a>
+          </li>
+          <li>
+            <a class="dropdown-item {% if active_route == 'event_fish_schedule_sssapi_prod' %}active{% endif %}"
+               href="{{ url_for('event_fish_schedule_sssapi_prod') }}">
+              [Sssapi正式環境]EventFishSchedule
+            </a>
+          </li>
+          <li><hr class="dropdown-divider"></li>
+          <li>
+            <a class="dropdown-item {% if active_route == 'index' %}active{% endif %}"
+               href="{{ url_for('index') }}">
               魚機私服連結轉跳
             </a>
           </li>

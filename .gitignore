@@ -4,3 +4,7 @@ __pycache__/
 
 # Local DB connection overrides (do not commit secrets)
 app/DBConnect.py
+
+# BigQuery / GCP service account keys
+app/secrets/*.json
+*.json.bak
